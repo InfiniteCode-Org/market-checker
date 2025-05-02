@@ -1,0 +1,173 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Roles {
+  ADMIN
+  USER
+}
+
+enum EventCategory {
+  CRYPTO
+  COMMODITIES
+  STOCK
+}
+
+enum EventStatus {
+  OPEN
+  CLOSED
+  RESOLVED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  LIMIT
+  MARKET
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL
+  FILLED
+  CANCELED
+}
+
+enum AssetType {
+  YES
+  NO
+}
+
+// Add ComparisonOperator enum for price monitoring
+enum ComparisonOperator {
+  LT // Less than
+  GT // Greater than
+  EQ // Equal to
+}
+
+model User {
+  id               String     @id @default(cuid())
+  public_address   String     @unique
+  username         String?
+  contract_address String?
+  avatar_url       String?
+  email            String?
+  role             Roles      @default(USER)
+  auth_nonce       String?    // For authentication
+  order_nonce      Int       @default(0) // For order sequencing
+  created_at       DateTime   @default(now())
+  updated_at       DateTime   @updatedAt
+  Comments         Comments[]
+  Watchlist        Watchlist[]
+  orders           Order[]
+}
+
+model Event {
+  id               Int               @id @default(autoincrement())
+  title            String
+  description      String?
+  category         EventCategory?
+  subcategory      String?
+  status           EventStatus        @default(OPEN)
+  end_time         DateTime
+  rules            String             @default("")
+  image_url        String?
+  tags             String             @default("")
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+  market           Market[]
+  Comments         Comments[]
+  Watchlist        Watchlist[]
+  
+  // Auto-resolution fields
+  autoResolve      Boolean            @default(false)
+  pythFeedId       String?            // Pyth Network price feed ID
+  triggerPrice     String?            // Threshold price
+  operator         ComparisonOperator? // Comparison operator
+}
+
+model Market {
+  id         Int       @id  
+  eventId    Int      
+  Event      Event    @relation(fields: [eventId], references: [id])
+  asset_type AssetType
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  orders     Order[]
+
+  @@unique([eventId, asset_type])
+}
+
+model Comments {
+  id         String   @id @default(cuid())
+  userId     String
+  eventId    Int      // Changed from String to Int
+  user       User     @relation(fields: [userId], references: [id])
+  event      Event    @relation(fields: [eventId], references: [id])
+  text       String
+  isReported Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model Watchlist {
+  id         String   @id @default(cuid())
+  userId     String
+  eventId    Int      // Changed from String to Int
+  user       User     @relation(fields: [userId], references: [id])
+  event      Event    @relation(fields: [eventId], references: [id])
+  created_at DateTime @default(now())
+}
+
+model Order {
+  id              String       @id @default(uuid())
+  user_id         String
+  user            User         @relation(fields: [user_id], references: [id])
+  market_id       Int          // Changed from String to Int
+  market          Market       @relation(fields: [market_id], references: [id])
+  side            OrderSide    
+  type            OrderType    
+  limit_price     String?      
+  quantity        String       
+  filled          String       @default("0")
+  status          OrderStatus  @default(OPEN)
+  nonce           Int          
+  signature       String       
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  isMinted        Boolean      @default(false)
+  marketContractAddress String?  
+  complementaryOrderId String?  // Reference to matched NO/YES order
+  
+  maker_transactions    Transaction[] @relation("MakerOrder")
+  taker_transactions    Transaction[] @relation("TakerOrder")
+}
+
+model Transaction {
+  id              String       @id @default(uuid())
+  taker_order_id  String       
+  taker_order     Order        @relation("TakerOrder", fields: [taker_order_id], references: [id])
+  maker_order_id  String       
+  maker_order     Order        @relation("MakerOrder", fields: [maker_order_id], references: [id])
+  price           String       
+  quantity        String       
+  created_at      DateTime     @default(now())
+  transaction_hash String
+  mintTransactionHash String?  // Tx hash for token minting
+  marketContractAddress String  // Where funds are held
+}
