@@ -1,6 +1,11 @@
 import { SQSEvent, SQSRecord, Context, Callback } from 'aws-lambda';
 import { PrismaClient } from '@prisma/client';
 import { ContractClient } from './ContractClient';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
 
 // Initialize clients outside the handler for reuse across invocations
 const prisma = new PrismaClient();
