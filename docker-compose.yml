@@ -28,6 +28,21 @@ services:
     volumes:
       - "${TMPDIR:-/tmp}/localstack_tmp:/tmp/localstack_tmp"
       - "/var/run/docker.sock:/var/run/docker.sock"
+    
+  # Market Checker Service
+  market_checker:
+    image: market_checker
+    container_name: market_checker
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/crypto_monitoring
+      - AWS_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/crypto-price-queue
+      - PYTH_ENDPOINT=https://hermes.pyth.network
+    depends_on:
+      - postgres
+      - localstack
 
 volumes:
   postgres-data: 

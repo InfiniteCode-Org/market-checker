@@ -14,6 +14,7 @@ export const config = {
     providerUrl: process.env.WEB3_PROVIDER_URL || '',
     oracleAddress: process.env.ORACLE_CONTRACT_ADDRESS || '',
     marketAddress: process.env.MARKET_CONTRACT_ADDRESS || '',
+    pythAddress: process.env.PYTH_CONTRACT_ADDRESS || '',
     privateKey: process.env.PRIVATE_KEY || '',
     gasPrice: process.env.GAS_PRICE || '50' // gwei
   }

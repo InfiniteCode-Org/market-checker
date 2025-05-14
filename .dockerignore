@@ -1,0 +1,20 @@
+# Node modules
+node_modules/
+
+# Git files
+.git/
+.gitignore
+
+# Build artifacts
+dist/
+
+# Development files
+*.log
+*.md
+*.sh
+cloudformation-template.yaml
+docker-compose.yml
+
+# Editor configs
+.idea/
+.vscode/ 

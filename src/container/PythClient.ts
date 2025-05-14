@@ -52,38 +52,66 @@ export class PythClient extends EventEmitter {
       // Close existing connection if any
       if (this.eventSource) {
         this.eventSource.close();
+        this.eventSource = null;
       }
       
       console.log(`Subscribing to ${uniqueIds.length} price feeds:`, uniqueIds);
       
-      // Open new connection with all active price IDs
-      this.eventSource = await this.client.getPriceUpdatesStream(uniqueIds);
-      
-      // Reset reconnect attempts on successful connection
-      this.reconnectAttempts = 0;
-      
-      // Handle price updates
-      this.eventSource.onmessage = (event: any) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.parsed && Array.isArray(data.parsed)) {
-            data.parsed.forEach((update: PriceUpdate) => {
-              // Emit the update event without storing
-            //   console.log("Received price update:", update);
-              this.emit('priceUpdate', update);
-            });
+      // Only establish a connection if there are price feeds to subscribe to
+      if (uniqueIds.length > 0) {
+        // Open new connection with all active price IDs
+        this.eventSource = await this.client.getPriceUpdatesStream(uniqueIds);
+        
+        // Reset reconnect attempts on successful connection
+        this.reconnectAttempts = 0;
+        
+        // Handle price updates
+        this.eventSource.onmessage = (event: any) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            // Process and set the VAA data
+            if (data.parsed && Array.isArray(data.parsed) && 
+                data.binary && data.binary.data && Array.isArray(data.binary.data)) {
+              
+              // Log received data structure for debugging
+              console.log("Received data:", data);
+              
+              // Process each parsed price update
+              data.parsed.forEach((update: any, index: number) => {
+                // Get the binary VAA data (should be at the same index)
+                const vaa = index < data.binary.data.length ? data.binary.data[index] : undefined;
+                
+                // Create a complete price update object with VAA data
+                const priceUpdate: PriceUpdate = {
+                  ...update,
+                  vaa // Add the VAA data to the price update
+                };
+                
+                // Log the update (for debugging)
+                console.log("Received price update:", priceUpdate);
+                
+                // Emit the complete price update event
+                this.emit('priceUpdate', priceUpdate);
+              });
+            } else if (data.parsed && Array.isArray(data.parsed)) {
+              // Fallback for when binary data isn't available
+              data.parsed.forEach((update: PriceUpdate) => {
+                console.log("Received price update (no VAA):", update);
+                this.emit('priceUpdate', update);
+              });
+            }
+          } catch (error) {
+            console.error("Error parsing price update:", error);
           }
-        } catch (error) {
-          console.error("Error parsing price update:", error);
-        }
-      };
-      
-      // Handle connection errors
-      this.eventSource.onerror = (error: any) => {
-        console.error("WebSocket connection error:", error);
-        this.handleConnectionError();
-      };
-      
+        };
+        
+        // Handle connection errors
+        this.eventSource.onerror = (error: any) => {
+          console.error("WebSocket connection error:", error);
+          this.handleConnectionError();
+        };
+      }
     } catch (error) {
       console.error("Failed to subscribe to price feeds:", error);
       this.handleConnectionError();
@@ -113,8 +141,26 @@ export class PythClient extends EventEmitter {
           try {
             clearTimeout(timeout);
             const data = JSON.parse(event.data);
+            
+            // Log received data structure for debugging
+            console.log("Received data:", data);
+            
             if (data.parsed && Array.isArray(data.parsed) && data.parsed.length > 0) {
-              const update = data.parsed[0] as PriceUpdate;
+              const updateData = data.parsed[0];
+              
+              // Extract the VAA binary data if available
+              let vaa: string | undefined = undefined;
+              if (data.binary && data.binary.data && Array.isArray(data.binary.data) && 
+                  data.binary.data.length > 0) {
+                vaa = data.binary.data[0];
+              }
+              
+              // Create a complete price update with the VAA data
+              const update: PriceUpdate = {
+                ...updateData,
+                vaa
+              };
+              
               singleEventSource.close();
               resolve(update);
             } else {
@@ -154,8 +200,10 @@ export class PythClient extends EventEmitter {
       this.subscribeToPriceFeeds(Array.from(this.activePriceIds));
     } else if (this.eventSource) {
       // No more active subscriptions, close the connection
+      console.log("No more active subscriptions, closing WebSocket connection");
       this.eventSource.close();
       this.eventSource = null;
+      this.reconnectAttempts = 0; // Reset reconnect attempts
     }
   }
 
@@ -163,6 +211,12 @@ export class PythClient extends EventEmitter {
    * Handle connection errors with exponential backoff
    */
   private handleConnectionError(): void {
+    // Check if we have any price feeds to subscribe to
+    if (this.activePriceIds.size === 0) {
+      console.log("No active price feeds to subscribe to, skipping reconnection");
+      return;
+    }
+
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       const delay = this.reconnectInterval * Math.pow(2, this.reconnectAttempts);
       this.reconnectAttempts++;

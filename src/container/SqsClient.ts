@@ -32,6 +32,13 @@ export class SqsClient {
         throw new Error(`Event ${event.id} is missing required auto-resolution fields`);
       }
 
+      // Check if VAA data is available and log it
+      if (priceUpdate.vaa) {
+        console.log(`Including VAA data (length: ${priceUpdate.vaa.length}) for event ${event.id}`);
+      } else {
+        console.log(`WARNING: No VAA data available for event ${event.id}`);
+      }
+
       const message: ResolutionEvent = {
         eventId: event.id,
         pythFeedId: event.pythFeedId,

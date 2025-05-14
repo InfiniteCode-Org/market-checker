@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Price Monitoring Service for Real-Time Crypto Market Resolution'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select a VPC for the resources
+  
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Select at least two subnets in your VPC
+  
+  DBUsername:
+    Type: String
+    Description: Database admin username
+    Default: admin
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  
+  DBPassword:
+    Type: String
+    Description: Database admin password
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    AllowedPattern: '[a-zA-Z0-9]*'
+
+  ECRImageURI:
+    Type: String
+    Description: ECR Image URI for the container (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/price-monitoring-container:latest)
+
+Resources:
+  # Security Groups
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS container
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+  
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref ECSSecurityGroup
+  
+  # RDS PostgreSQL Database
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds: !Ref Subnets
+  
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: crypto_monitoring
+      Engine: postgres
+      EngineVersion: 14
+      DBInstanceClass: db.t3.small
+      AllocatedStorage: 20
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DBSecurityGroup.GroupId
+      PubliclyAccessible: false
+    DeletionPolicy: Snapshot
+  
+  # SQS Queue
+  PriceMonitoringQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: price-monitoring-queue
+      VisibilityTimeout: 180
+      MessageRetentionPeriod: 1209600
+  
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+      Policies:
+        - PolicyName: lambda-rds-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: '*'
+  
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+      Policies:
+        - PolicyName: ecs-rds-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: '*'
+  
+  # Log Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/price-monitoring
+      RetentionInDays: 30
+  
+  # Lambda Function
+  PriceResolutionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: price-resolution-lambda
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Lambda invoked with event:', JSON.stringify(event));
+            return { statusCode: 200, body: 'Placeholder for actual lambda code' };
+          };
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref PriceMonitoringQueue
+          DATABASE_URL: !Sub 'postgresql://${DBUsername}:${DBPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/crypto_monitoring'
+      Timeout: 30
+  
+  # Lambda Event Source Mapping
+  LambdaSQSMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt PriceMonitoringQueue.Arn
+      FunctionName: !GetAtt PriceResolutionLambda.Arn
+      BatchSize: 10
+  
+  # ECS Resources
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: price-monitoring-cluster
+      CapacityProviders:
+        - FARGATE
+  
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: price-monitoring-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: price-monitoring
+          Image: !Ref ECRImageURI
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              HostPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: SQS_QUEUE_URL
+              Value: !Ref PriceMonitoringQueue
+            - Name: DATABASE_URL
+              Value: !Sub 'postgresql://${DBUsername}:${DBPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/crypto_monitoring'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+  
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: price-monitoring-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref Subnets
+          SecurityGroups:
+            - !GetAtt ECSSecurityGroup.GroupId
+          AssignPublicIp: ENABLED
+    DependsOn: Database
+
+Outputs:
+  QueueURL:
+    Description: URL of SQS Queue
+    Value: !Ref PriceMonitoringQueue
+  
+  DBEndpoint:
+    Description: Endpoint of the RDS database
+    Value: !GetAtt Database.Endpoint.Address
+  
+  LambdaFunction:
+    Description: Name of the Lambda function
+    Value: !Ref PriceResolutionLambda
+  
+  ECSClusterName:
+    Description: Name of the ECS cluster
+    Value: !Ref ECSCluster
+  
+  ECSServiceName:
+    Description: Name of the ECS service
+    Value: !Ref ECSService 

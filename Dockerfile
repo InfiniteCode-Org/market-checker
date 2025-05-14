@@ -1,6 +1,9 @@
-FROM node:18-alpine as build
+FROM node:18-bullseye as build
 
 WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y python3 make g++ gcc libssl-dev
 
 # Copy package files and install dependencies
 COPY package*.json ./
@@ -20,9 +23,12 @@ COPY src ./src/
 RUN npm run build
 
 # Production stage
-FROM node:18-alpine
+FROM node:18-bullseye
 
 WORKDIR /app
+
+# Install required dependencies
+RUN apt-get update && apt-get install -y openssl libssl1.1 python3 && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy built app
 COPY --from=build /app/package*.json ./
@@ -36,9 +42,6 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 
 # Set environment variables
 ENV NODE_ENV=production
-
-# Run as non-root user
-USER node
 
 # Start the application
 CMD ["node", "dist/container/index.js"] 

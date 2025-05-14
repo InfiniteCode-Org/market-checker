@@ -14,6 +14,8 @@ export class PriceMonitor {
   // Track resolved events to batch process them
   private pendingResolutions: Set<number> = new Set();
   private resolutionTimeout: NodeJS.Timeout | null = null;
+  // Track events that are in the process of being resolved
+  private processingEvents: Set<number> = new Set();
 
   constructor(
     pythEndpoint: string,
@@ -184,6 +186,8 @@ export class PriceMonitor {
     try {
       await this.dbClient.resolveEvents(eventIds);
       console.log(`Batch resolved ${eventIds.length} events`);
+      // Clear these events from the processing set as well
+      eventIds.forEach(id => this.processingEvents.delete(id));
     } catch (error) {
       console.error("Error processing pending resolutions:", error);
     }
@@ -258,9 +262,18 @@ export class PriceMonitor {
       try {
         // Skip if missing required fields
         if (!event.triggerPrice || !event.operator) continue;
+        
+        // Skip if this event is already being processed for resolution
+        if (this.processingEvents.has(event.id)) {
+          console.log(`Skipping duplicate processing for event ${event.id} - already being resolved`);
+          continue;
+        }
+        
         // Check if event has expired - HYBRID APPROACH: Check expiration during price update
         if (event.end_time <= currentTime) {
           console.log(`Event ${event.id} expired during price update, resolving as NO`);
+          // Mark as being processed to prevent duplicates
+          this.processingEvents.add(event.id);
           // Process as expired - resolve to NO
           this.sqsClient.sendResolutionEvent(event, update, 'NO')
             .then(() => {
@@ -272,6 +285,8 @@ export class PriceMonitor {
             })
             .catch(error => {
               console.error(`Failed to send resolution event for expired event ${event.id}:`, error);
+              // Remove from processing set if there was an error so it can be retried
+              this.processingEvents.delete(event.id);
             });
           // Skip price check for expired events
           continue;
@@ -290,6 +305,8 @@ export class PriceMonitor {
         }
         if (conditionMet) {
           console.log(`Condition met for event ${event.id}: ${adjustedPrice} ${operator} ${triggerPrice}`);
+          // Mark as being processed to prevent duplicates
+          this.processingEvents.add(event.id);
           // Send resolution event to SQS with YES outcome
           this.sqsClient.sendResolutionEvent(event, update, 'YES')
             .then(() => {
@@ -301,6 +318,8 @@ export class PriceMonitor {
             })
             .catch(error => {
               console.error(`Failed to send resolution event for event ${event.id}:`, error);
+              // Remove from processing set if there was an error so it can be retried
+              this.processingEvents.delete(event.id);
             });
         }
       } catch (error) {
