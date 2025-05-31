@@ -8,6 +8,7 @@
     "start": "node dist/container/index.js",
     "dev": "ts-node-dev --respawn src/container/index.ts",
     "deploy:lambda": "npm run build && aws lambda update-function-code --function-name price-resolution-lambda --zip-file fileb://dist/lambda/index.js",
+    "package:lambda": "./scripts/create-lambda-package.sh",
     "lint": "eslint . --ext .ts",
     "test": "jest",
     "test:monitor": "ts-node src/test-monitor.ts",
@@ -15,7 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.470.0",
-    "@prisma/client": "^5.0.0",
+    "@prisma/client": "^6.8.2",
     "@pythnetwork/hermes-client": "^2.0.0",
     "aws-lambda": "^1.0.7",
     "aws-sdk": "^2.1432.0",
@@ -32,7 +33,7 @@
     "@typescript-eslint/parser": "^5.62.0",
     "eslint": "^8.45.0",
     "jest": "^29.6.2",
-    "prisma": "^5.0.0",
+    "prisma": "^6.8.2",
     "ts-jest": "^29.1.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.1.6"
