@@ -14,13 +14,23 @@ interface ResolutionEvent {
 }
 
 export class SqsClient {
-  private sqs: SQS;
+  private sqs?: SQS;
   private queueUrl: string;
+  private isLocalMode: boolean;
 
   constructor(region: string = 'us-east-1', queueUrl: string) {
-    this.sqs = new SQS({ region });
     this.queueUrl = queueUrl;
-    console.log(`SQS client initialized with queue URL: ${queueUrl}`);
+    
+    // Check if we're in local development mode (no AWS credentials)
+    this.isLocalMode = !process.env.AWS_ACCESS_KEY_ID && !process.env.AWS_SECRET_ACCESS_KEY;
+    
+    if (this.isLocalMode) {
+      console.log(`SQS client initialized in LOCAL MODE - queue URL: ${queueUrl}`);
+      console.log('AWS credentials not found. Resolution events will be logged but not sent to SQS.');
+    } else {
+      this.sqs = new SQS({ region });
+      console.log(`SQS client initialized with queue URL: ${queueUrl}`);
+    }
   }
 
   /**
@@ -50,16 +60,42 @@ export class SqsClient {
         vaa: priceUpdate.vaa
       };
 
-      const params = {
+      const params: any = {
         MessageBody: JSON.stringify(message),
         QueueUrl: this.queueUrl,
-        // If using a FIFO queue, uncomment these:
-        // MessageGroupId: `event-${event.id}`,
-        // MessageDeduplicationId: `${event.id}-${priceUpdate.price.publish_time}`
       };
 
-      await this.sqs.sendMessage(params).promise();
-      console.log(`Resolution event sent to SQS for event ${event.id} with winning outcome: ${winningOutcome}`);
+      // Check if this is a FIFO queue (ends with .fifo)
+      const isFifoQueue = this.queueUrl.endsWith('.fifo');
+      
+      if (isFifoQueue) {
+        // FIFO queue parameters
+        params.MessageGroupId = `event-${event.id}`;
+        params.MessageDeduplicationId = `${event.id}-${priceUpdate.price.publish_time}-${winningOutcome}`;
+        console.log(`Using FIFO queue with deduplication ID: ${params.MessageDeduplicationId}`);
+      }
+
+      if (this.isLocalMode) {
+        // In local mode, just log the resolution event
+        console.log(`[LOCAL MODE] Resolution event for event ${event.id}:`, JSON.stringify(message, null, 2));
+        console.log(`[LOCAL MODE] Would send to SQS queue: ${this.queueUrl}`);
+        if (isFifoQueue) {
+          console.log(`[LOCAL MODE] FIFO queue parameters:`, {
+            MessageGroupId: params.MessageGroupId,
+            MessageDeduplicationId: params.MessageDeduplicationId
+          });
+        }
+      } else {
+        // In production mode, send to SQS
+        if (!this.sqs) {
+          throw new Error('SQS client not initialized');
+        }
+        await this.sqs.sendMessage(params).promise();
+        console.log(`Resolution event sent to SQS for event ${event.id} with winning outcome: ${winningOutcome}`);
+        if (isFifoQueue) {
+          console.log(`Message sent with deduplication ID: ${params.MessageDeduplicationId}`);
+        }
+      }
     } catch (error) {
       console.error(`Error sending message to SQS for event ${event.id}:`, error);
       throw error;

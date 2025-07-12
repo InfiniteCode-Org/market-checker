@@ -1,4 +1,4 @@
-import { PrismaClient, Event, EventStatus, ComparisonOperator } from '@prisma/client';
+import { PrismaClient, Event, EventStatus } from '@prisma/client';
 
 export class DatabaseClient {
   private prisma: PrismaClient;
@@ -52,6 +52,26 @@ export class DatabaseClient {
       return events;
     } catch (error) {
       console.error("Error fetching expired auto-resolution events:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update an event status to RESOLVED with winning token ID
+   */
+  async resolveEventWithOutcome(eventId: number, winningTokenId: number): Promise<void> {
+    try {
+      await this.prisma.event.update({
+        where: { id: eventId },
+        data: { 
+          status: EventStatus.RESOLVED,
+          winningTokenId: winningTokenId
+        }
+      });
+      
+      console.log(`Event ${eventId} marked as resolved with winning token ID ${winningTokenId}`);
+    } catch (error) {
+      console.error(`Error resolving event ${eventId} with outcome:`, error);
       throw error;
     }
   }

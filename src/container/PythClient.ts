@@ -69,18 +69,18 @@ export class PythClient extends EventEmitter {
         this.eventSource.onmessage = (event: any) => {
           try {
             const data = JSON.parse(event.data);
-            
+           // console.log("Received data:", data);
             // Process and set the VAA data
             if (data.parsed && Array.isArray(data.parsed) && 
                 data.binary && data.binary.data && Array.isArray(data.binary.data)) {
               
               // Log received data structure for debugging
-              console.log("Received data:", data);
+            //  console.log("Received data:", data);
               
               // Process each parsed price update
               data.parsed.forEach((update: any, index: number) => {
                 // Get the binary VAA data (should be at the same index)
-                const vaa = index < data.binary.data.length ? data.binary.data[index] : undefined;
+                const vaa = data.binary.data[0] ;
                 
                 // Create a complete price update object with VAA data
                 const priceUpdate: PriceUpdate = {
@@ -89,7 +89,7 @@ export class PythClient extends EventEmitter {
                 };
                 
                 // Log the update (for debugging)
-                console.log("Received price update:", priceUpdate);
+                //  console.log("Received price update:", priceUpdate);
                 
                 // Emit the complete price update event
                 this.emit('priceUpdate', priceUpdate);
@@ -97,7 +97,7 @@ export class PythClient extends EventEmitter {
             } else if (data.parsed && Array.isArray(data.parsed)) {
               // Fallback for when binary data isn't available
               data.parsed.forEach((update: PriceUpdate) => {
-                console.log("Received price update (no VAA):", update);
+                //console.log("Received price update (no VAA):", update);
                 this.emit('priceUpdate', update);
               });
             }

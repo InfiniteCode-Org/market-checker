@@ -73,8 +73,15 @@ export async function handler(event: SQSEvent, context: Context, callback: Callb
   process.env.PRIVATE_KEY!
 );
   
+    // Verify Pyth contract interface
+    console.log("Verifying Pyth contract interface...");
+    await contractClient.verifyPythContract();
+  
   // Group records by event ID
   const eventGroups = new Map<number, SQSRecord[]>();
+  
+  // Track processed events to prevent duplicates within this invocation
+  const processedEvents = new Set<number>();
   
   // First pass - group by event ID
   for (const record of event.Records) {
@@ -84,6 +91,12 @@ export async function handler(event: SQSEvent, context: Context, callback: Callb
       
       if (!eventId) {
         console.error("Message missing eventId:", message);
+        continue;
+      }
+      
+      // Skip if we've already processed this event in this invocation
+      if (processedEvents.has(eventId)) {
+        console.log(`Skipping duplicate event ${eventId} in this invocation`);
         continue;
       }
       
@@ -100,6 +113,9 @@ export async function handler(event: SQSEvent, context: Context, callback: Callb
   const processingPromises = Array.from(eventGroups.entries()).map(
     async ([eventId, records]) => {
       try {
+        // Mark this event as processed to prevent duplicates
+        processedEvents.add(eventId);
+        
           if (!contractClient) {
             throw new Error("ContractClient not initialized");
           }
@@ -163,13 +179,16 @@ export async function handler(event: SQSEvent, context: Context, callback: Callb
         console.log(`Calculated winning token ID: ${winningTokenId} for event ${eventId} (outcome: ${winningOutcome})`);
         
         // Call the smart contract with all VAAs in a single transaction
-        const txHash = await contractClient.updatePriceAndFulfill(
+        let txHash: string;
+        try {
+          txHash = await contractClient.updatePriceAndFulfill(
           marketAddress,
           vaas
         );
         
         console.log(`Smart contract called successfully for event ${eventId}, txHash: ${txHash}`);
           
+          // Only update the database after successful smart contract transaction
           if (!prisma) {
             throw new Error("Prisma client not initialized");
           }
@@ -184,6 +203,16 @@ export async function handler(event: SQSEvent, context: Context, callback: Callb
         });
         
         console.log(`Event ${eventId} resolved successfully with winning token ID ${winningTokenId}`);
+          
+        } catch (contractError) {
+          console.error(`Smart contract transaction failed for event ${eventId}:`, contractError);
+          
+          // Don't update the database if the smart contract transaction failed
+          console.log(`Database update skipped for event ${eventId} due to smart contract failure`);
+          
+          // Re-throw the error to be caught by the outer catch block
+          throw contractError;
+        }
       } catch (error) {
         console.error(`Error processing event ${eventId}:`, error);
       }

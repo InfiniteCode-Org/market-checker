@@ -62,9 +62,7 @@ class ContractClient {
      */
     async getMarketAddressForEvent(eventId) {
         try {
-            fetch('https://jsonplaceholder.typicode.com/todos/1')
-                .then(response => response.json())
-                .then(json => console.log(json));
+             
             console.log(`Fetching market address for event ID ${eventId}`);
             const marketAddress = await this.marketFactoryContract.marketAddress(eventId);
             if (!marketAddress || marketAddress === '0x0000000000000000000000000000000000000000') {

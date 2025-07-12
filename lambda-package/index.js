@@ -138,9 +138,7 @@ async function handler(event, context, callback) {
                 // Calculate winning token ID based on the outcome
                 const winningTokenId = winningOutcome === 'YES' ? eventId * 2 : eventId * 2 + 1;
                 console.log(`Calculated winning token ID: ${winningTokenId} for event ${eventId} (outcome: ${winningOutcome})`);
-                // Call the smart contract with all VAAs in a single transaction
-                const txHash = await contractClient.updatePriceAndFulfill(marketAddress, vaas);
-                console.log(`Smart contract called successfully for event ${eventId}, txHash: ${txHash}`);
+
                 if (!prisma) {
                     throw new Error("Prisma client not initialized");
                 }
@@ -153,6 +151,11 @@ async function handler(event, context, callback) {
                     }
                 });
                 console.log(`Event ${eventId} resolved successfully with winning token ID ${winningTokenId}`);
+                
+                // Call the smart contract with all VAAs in a single transaction
+                const txHash = await contractClient.updatePriceAndFulfill(marketAddress, vaas);
+                console.log(`Smart contract called successfully for event ${eventId}, txHash : ${txHash}`);
+               
             }
             catch (error) {
                 console.error(`Error processing event ${eventId}:`, error);

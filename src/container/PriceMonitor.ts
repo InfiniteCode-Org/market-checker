@@ -1,4 +1,4 @@
-import { Event, ComparisonOperator, EventStatus } from '@prisma/client';
+import { Event, ComparisonOperator } from '@prisma/client';
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
 import { SqsClient } from './SqsClient';
@@ -12,7 +12,7 @@ export class PriceMonitor {
   private expiredCheckInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   // Track resolved events to batch process them
-  private pendingResolutions: Set<number> = new Set();
+  private pendingResolutions: Map<number, 'YES' | 'NO'> = new Map();
   private resolutionTimeout: NodeJS.Timeout | null = null;
   // Track events that are in the process of being resolved
   private processingEvents: Set<number> = new Set();
@@ -27,7 +27,12 @@ export class PriceMonitor {
     this.sqsClient = new SqsClient(region, sqsQueueUrl);
     
     // Listen for price updates
-    this.pythClient.on('priceUpdate', this.handlePriceUpdate.bind(this));
+    this.pythClient.on('priceUpdate', (update: PriceUpdate) => {
+      // Handle the async method properly
+      this.handlePriceUpdate(update).catch(error => {
+        console.error('Error handling price update:', error);
+      });
+    });
     
     // Handle connection failures
     this.pythClient.on('connectionFailed', this.handleConnectionFailure.bind(this));
@@ -49,10 +54,10 @@ export class PriceMonitor {
     await this.checkExpiredEvents();
     
     // Set up periodic refresh of events (every 5 minutes)
-    this.checkInterval = setInterval(this.refreshEvents.bind(this), 5 * 60 * 1000);
+    this.checkInterval = setInterval(this.refreshEvents.bind(this), 2 * 60 * 1000);
     
     // Set up periodic check for expired events (every hour - safety net)
-    this.expiredCheckInterval = setInterval(this.checkExpiredEvents.bind(this), 60 * 60 * 1000);
+    this.expiredCheckInterval = setInterval(this.checkExpiredEvents.bind(this), 5 * 60 * 1000);
   }
 
   /**
@@ -149,12 +154,21 @@ export class PriceMonitor {
           if (currentPrice) {
             // Process all events for this feed with the same price data
             for (const event of events) {
+              // Skip if this event is already being processed
+              if (this.processingEvents.has(event.id)) {
+                console.log(`Skipping expired event ${event.id} - already being processed`);
+                continue;
+              }
+              
+              // Mark as being processed to prevent duplicates
+              this.processingEvents.add(event.id);
+              
               // Send resolution event with NO outcome
               await this.sqsClient.sendResolutionEvent(event, currentPrice, 'NO');
               console.log(`Resolution event sent for expired event ${event.id}`);
               
               // Add to pending resolutions
-              this.pendingResolutions.add(event.id);
+              this.pendingResolutions.set(event.id, 'NO');
             }
           } else {
             // If we can't get price data, mark all events as resolved directly
@@ -180,12 +194,20 @@ export class PriceMonitor {
   private async processPendingResolutions(): Promise<void> {
     if (this.pendingResolutions.size === 0) return;
     
-    const eventIds = Array.from(this.pendingResolutions);
+    const eventIds = Array.from(this.pendingResolutions.keys());
+    const resolutions = Array.from(this.pendingResolutions.entries());
     this.pendingResolutions.clear();
     
     try {
-      await this.dbClient.resolveEvents(eventIds);
-      console.log(`Batch resolved ${eventIds.length} events`);
+      // Update each event with its winning outcome
+      await Promise.all(resolutions.map(async ([eventId, winningOutcome]) => {
+        const winningTokenId = winningOutcome === 'YES' ? eventId * 2 : eventId * 2 + 1;
+        
+        await this.dbClient.resolveEventWithOutcome(eventId, winningTokenId);
+        console.log(`Event ${eventId} resolved with winning token ID ${winningTokenId} (outcome: ${winningOutcome})`);
+      }));
+      
+      console.log(`Batch resolved ${eventIds.length} events with winning outcomes`);
       // Clear these events from the processing set as well
       eventIds.forEach(id => this.processingEvents.delete(id));
     } catch (error) {
@@ -229,7 +251,7 @@ export class PriceMonitor {
   /**
    * Handle a price update from the Pyth client
    */
-  private handlePriceUpdate(update: PriceUpdate): void {
+  private async handlePriceUpdate(update: PriceUpdate): Promise<void> {
     // console.log("update", update);
     const feedId = '0x'+update.id;
     // console.log("feedId", feedId);
@@ -237,6 +259,7 @@ export class PriceMonitor {
     // console.log("events", events);
     // console.log("HI")
     if (!events || events.length === 0) return;
+    const eventIds = events.map(e => e.id);
     
     // Convert price to decimal for comparison
     const currentPrice = BigInt(update.price.price);
@@ -250,14 +273,18 @@ export class PriceMonitor {
     } else {
       adjustedPrice = Number(currentPrice) * Math.pow(10, expo);
     }
-    console.log("adjustedPrice", adjustedPrice);
+   // console.log("adjustedPrice", adjustedPrice, currentPrice, expo);
     // Only log occasional updates to reduce noise
-    if (Math.random() < 0.01) { // Log approximately 1% of updates
-      console.log(`Processing price update for ${feedId}: ${adjustedPrice} (expo: ${expo})`);
+    if (Math.random() < 0.1) { // Log approximately 1% of updates
+      console.log(`Processing price update for ${feedId.slice(0, 6)}... ${feedId.slice(-4)}: ${adjustedPrice} - monitoring events: [${eventIds.join(', ')}]`);
+      // Log which events are being processed for this price update
+      
     }
     // Track events that met their condition or expired
     const resolvedEventIds: number[] = [];
     const currentTime = new Date();
+    
+    // Process events synchronously to prevent race conditions
     for (const event of events) {
       try {
         // Skip if missing required fields
@@ -274,53 +301,57 @@ export class PriceMonitor {
           console.log(`Event ${event.id} expired during price update, resolving as NO`);
           // Mark as being processed to prevent duplicates
           this.processingEvents.add(event.id);
-          // Process as expired - resolve to NO
-          this.sqsClient.sendResolutionEvent(event, update, 'NO')
-            .then(() => {
-              this.pendingResolutions.add(event.id);
-              // Remove event from monitoring immediately
-              this.removeEventFromMonitoring(feedId, event.id);
-              // Schedule batch processing of resolutions
-              this.schedulePendingResolutions();
-            })
-            .catch(error => {
-              console.error(`Failed to send resolution event for expired event ${event.id}:`, error);
-              // Remove from processing set if there was an error so it can be retried
-              this.processingEvents.delete(event.id);
-            });
+          
+          try {
+            // Send resolution event synchronously to prevent duplicates
+            await this.sqsClient.sendResolutionEvent(event, update, 'NO');
+            this.pendingResolutions.set(event.id, 'NO');
+            // Remove event from monitoring immediately
+            this.removeEventFromMonitoring(feedId, event.id);
+            // Schedule batch processing of resolutions
+            this.schedulePendingResolutions();
+            console.log(`Resolution event sent successfully for expired event ${event.id}`);
+          } catch (error) {
+            console.error(`Failed to send resolution event for expired event ${event.id}:`, error);
+            // Remove from processing set if there was an error so it can be retried
+            this.processingEvents.delete(event.id);
+          }
           // Skip price check for expired events
           continue;
         }
+        
         // For non-expired events, check price condition
         const triggerPrice = Number(event.triggerPrice);
         const operator = event.operator;
         let conditionMet = false;
         // Check if the condition is met
         if (operator === ComparisonOperator.GT) {
-          conditionMet = adjustedPrice > triggerPrice;
+          conditionMet = adjustedPrice >= triggerPrice;
         } else if (operator === ComparisonOperator.LT) {
-          conditionMet = adjustedPrice < triggerPrice;
+          conditionMet = adjustedPrice <= triggerPrice;
         } else if (operator === ComparisonOperator.EQ) {
           conditionMet = adjustedPrice === triggerPrice;
         }
+        
         if (conditionMet) {
           console.log(`Condition met for event ${event.id}: ${adjustedPrice} ${operator} ${triggerPrice}`);
           // Mark as being processed to prevent duplicates
           this.processingEvents.add(event.id);
-          // Send resolution event to SQS with YES outcome
-          this.sqsClient.sendResolutionEvent(event, update, 'YES')
-            .then(() => {
-              this.pendingResolutions.add(event.id);
-              // Remove event from monitoring immediately
-              this.removeEventFromMonitoring(feedId, event.id);
-              // Schedule batch processing of resolutions
-              this.schedulePendingResolutions();
-            })
-            .catch(error => {
-              console.error(`Failed to send resolution event for event ${event.id}:`, error);
-              // Remove from processing set if there was an error so it can be retried
-              this.processingEvents.delete(event.id);
-            });
+          
+          try {
+            // Send resolution event synchronously to prevent duplicates
+            await this.sqsClient.sendResolutionEvent(event, update, 'YES');
+            this.pendingResolutions.set(event.id, 'YES');
+            // Remove event from monitoring immediately
+            this.removeEventFromMonitoring(feedId, event.id);
+            // Schedule batch processing of resolutions
+            this.schedulePendingResolutions();
+            console.log(`Resolution event sent successfully for event ${event.id}`);
+          } catch (error) {
+            console.error(`Failed to send resolution event for event ${event.id}:`, error);
+            // Remove from processing set if there was an error so it can be retried
+            this.processingEvents.delete(event.id);
+          }
         }
       } catch (error) {
         console.error(`Error processing price update for event ${event.id}:`, error);
@@ -342,9 +373,11 @@ export class PriceMonitor {
     const remainingEvents = events.filter(e => e.id !== eventId);
     if (remainingEvents.length > 0) {
       this.monitoringEvents.set(feedId, remainingEvents);
+      console.log(`Removed event ${eventId} from monitoring feed ${feedId}. Remaining events: [${remainingEvents.map(e => e.id).join(', ')}]`);
     } else {
       this.monitoringEvents.delete(feedId);
       this.pythClient.unsubscribe(feedId);
+      console.log(`Removed event ${eventId} from monitoring feed ${feedId}. No more events for this feed, unsubscribed.`);
     }
   }
-} 
+}

@@ -12,7 +12,8 @@
     "lint": "eslint . --ext .ts",
     "test": "jest",
     "test:monitor": "ts-node src/test-monitor.ts",
-    "test:consumer": "ts-node src/test-consumer.ts"
+    "test:consumer": "ts-node src/test-consumer.ts",
+    "test:lambda": "ts-node src/test-lambda-direct.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.470.0",

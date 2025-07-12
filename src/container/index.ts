@@ -6,7 +6,7 @@ dotenv.config();
 
 const pythEndpoint = process.env.PYTH_ENDPOINT || 'https://hermes.pyth.network';
 const sqsQueueUrl = process.env.SQS_QUEUE_URL;
-const awsRegion = process.env.AWS_REGION || 'us-east-1';
+const awsRegion = process.env.AWS_REGION || 'us-east-2';
 
 if (!sqsQueueUrl) {
   console.error("SQS_QUEUE_URL environment variable is required");

@@ -5,7 +5,7 @@ export const config = {
     maxReconnectAttempts: 10
   },
   aws: {
-    region: process.env.AWS_REGION || 'us-east-1',
+    region: process.env.AWS_REGION || 'us-east-2',
     sqs: {
       queueUrl: process.env.SQS_QUEUE_URL || ''
     }
