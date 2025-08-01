@@ -27,6 +27,7 @@ export class DatabaseClient {
       return events;
     } catch (error) {
       console.error("Error fetching active auto-resolution events:", error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -52,6 +53,7 @@ export class DatabaseClient {
       return events;
     } catch (error) {
       console.error("Error fetching expired auto-resolution events:", error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -72,6 +74,7 @@ export class DatabaseClient {
       console.log(`Event ${eventId} marked as resolved with winning token ID ${winningTokenId}`);
     } catch (error) {
       console.error(`Error resolving event ${eventId} with outcome:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -89,6 +92,7 @@ export class DatabaseClient {
       console.log(`Event ${eventId} marked as resolved in the database`);
     } catch (error) {
       console.error(`Error resolving event ${eventId}:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -113,6 +117,7 @@ export class DatabaseClient {
       console.log(`Batch resolved ${eventIds.length} events: ${eventIds.join(', ')}`);
     } catch (error) {
       console.error(`Error batch resolving events:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -129,6 +134,7 @@ export class DatabaseClient {
       return markets;
     } catch (error) {
       console.error(`Error getting markets for event ${eventId}:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }
@@ -143,6 +149,7 @@ export class DatabaseClient {
       });
     } catch (error) {
       console.error(`Error getting event ${eventId}:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }

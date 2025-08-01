@@ -98,6 +98,7 @@ export class SqsClient {
       }
     } catch (error) {
       console.error(`Error sending message to SQS for event ${event.id}:`, error);
+      Sentry.captureException(error);
       throw error;
     }
   }

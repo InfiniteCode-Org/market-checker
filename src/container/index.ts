@@ -1,3 +1,4 @@
+import './instrument';
 import { PriceMonitor } from './PriceMonitor';
 import dotenv from 'dotenv';
 

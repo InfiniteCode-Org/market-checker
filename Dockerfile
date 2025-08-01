@@ -6,8 +6,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y python3 make g++ gcc libssl-dev
 
 # Copy package files and install dependencies
-COPY package*.json ./
-RUN npm ci
+COPY package.json ./
+RUN npm install
 
 # Copy prisma schema
 COPY prisma ./prisma/
@@ -31,7 +31,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y openssl libssl1.1 python3 && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy built app
-COPY --from=build /app/package*.json ./
+COPY --from=build /app/package.json ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/prisma ./prisma

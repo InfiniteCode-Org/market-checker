@@ -119,6 +119,7 @@ export class PriceMonitor {
       console.log(`Monitoring ${events.length} events across ${priceIds.length} price feeds`);
     } catch (error) {
       console.error("Error refreshing events:", error);
+      Sentry.captureException(error);
     }
   }
 
@@ -178,6 +179,7 @@ export class PriceMonitor {
           }
         } catch (error) {
           console.error(`Error processing feed ${feedId} for expired events:`, error);
+          Sentry.captureException(error);
         }
       }
       
@@ -185,6 +187,7 @@ export class PriceMonitor {
       await this.processPendingResolutions();
     } catch (error) {
       console.error("Error checking expired events:", error);
+      Sentry.captureException(error);
     }
   }
 
@@ -212,6 +215,7 @@ export class PriceMonitor {
       eventIds.forEach(id => this.processingEvents.delete(id));
     } catch (error) {
       console.error("Error processing pending resolutions:", error);
+      Sentry.captureException(error);
     }
   }
 
@@ -351,10 +355,12 @@ export class PriceMonitor {
             console.error(`Failed to send resolution event for event ${event.id}:`, error);
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
+            Sentry.captureException(error);
           }
         }
       } catch (error) {
         console.error(`Error processing price update for event ${event.id}:`, error);
+        Sentry.captureException(error);
       }
     }
   }

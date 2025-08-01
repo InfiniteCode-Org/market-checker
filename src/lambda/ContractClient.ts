@@ -209,9 +209,9 @@ export class ContractClient {
       console.log(`Waiting for transaction confirmation...`);
       
       // Add timeout for transaction confirmation
-      const confirmationPromise = tx.wait();
+      const confirmationPromise = tx.wait(90000);
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Transaction confirmation timed out after 30 seconds')), 30000);
+        setTimeout(() => reject(new Error('Transaction confirmation timed out after 30 seconds')), 90000);
       });
       
       const receipt = await Promise.race([confirmationPromise, timeoutPromise]);
