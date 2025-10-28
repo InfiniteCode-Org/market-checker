@@ -1,47 +1,23 @@
-FROM node:18-bullseye as build
+FROM public.ecr.aws/docker/library/node:18-alpine
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y python3 make g++ gcc libssl-dev
+# Copy package files
+COPY package.json package-lock.json ./
 
-# Copy package files and install dependencies
-COPY package.json ./
-RUN npm install
+# Install production dependencies
+RUN npm ci --only=production
 
-# Copy prisma schema
-COPY prisma ./prisma/
-
-# Generate Prisma client
+# Copy Prisma schema and generate client
+COPY prisma ./prisma
 RUN npx prisma generate
 
-# Copy source code
-COPY tsconfig.json ./
-COPY src ./src/
+# Copy built container service code
+COPY dist/container ./dist/container
+COPY dist/shared ./dist/shared
 
-# Build the application
-RUN npm run build
-
-# Production stage
-FROM node:18-bullseye
-
-WORKDIR /app
-
-# Install required dependencies
-RUN apt-get update && apt-get install -y openssl libssl1.1 python3 && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Copy built app
-COPY --from=build /app/package.json ./
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/prisma ./prisma
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-  CMD node -e "const http = require('http'); const options = { timeout: 2000 }; const req = http.request('http://localhost:8080/health', options, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }); req.on('error', () => process.exit(1)); req.end();"
-
-# Set environment variables
+# Set environment to production
 ENV NODE_ENV=production
 
-# Start the application
+# Run the price monitor service
 CMD ["node", "dist/container/index.js"] 

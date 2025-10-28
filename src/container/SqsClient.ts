@@ -1,5 +1,5 @@
 import { SQS } from 'aws-sdk';
-import { Event } from '@prisma/client';
+type Event = any;
 import { PriceUpdate } from './PythClient';
 
 interface ResolutionEvent {
@@ -11,6 +11,7 @@ interface ResolutionEvent {
   timestamp: number;
   winningOutcome: 'YES' | 'NO';
   vaa?: string; // Binary data needed for contract updates
+  keyIndex: number; // Which private key to use (0-9)
 }
 
 export class SqsClient {
@@ -21,10 +22,25 @@ export class SqsClient {
   constructor(region: string = 'us-east-1', queueUrl: string) {
     this.queueUrl = queueUrl;
     
+    // Support explicit LocalStack endpoint when provided
+    const explicitEndpoint = process.env.AWS_SQS_ENDPOINT; // e.g. http://localhost:4566
+
     // Check if we're in local development mode (no AWS credentials)
-    this.isLocalMode = !process.env.AWS_ACCESS_KEY_ID && !process.env.AWS_SECRET_ACCESS_KEY;
-    
-    if (this.isLocalMode) {
+    this.isLocalMode = !process.env.AWS_ACCESS_KEY_ID && !process.env.AWS_SECRET_ACCESS_KEY && !explicitEndpoint;
+
+    if (explicitEndpoint) {
+      // Configure SQS to talk to LocalStack even without real AWS creds
+      this.sqs = new SQS({
+        region,
+        endpoint: explicitEndpoint,
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'test',
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'test'
+        }
+      });
+      this.isLocalMode = false; // allow actual sending via LocalStack
+      console.log(`SQS client initialized with explicit endpoint ${explicitEndpoint} and queue URL: ${queueUrl}`);
+    } else if (this.isLocalMode) {
       console.log(`SQS client initialized in LOCAL MODE - queue URL: ${queueUrl}`);
       console.log('AWS credentials not found. Resolution events will be logged but not sent to SQS.');
     } else {
@@ -36,7 +52,7 @@ export class SqsClient {
   /**
    * Send event resolution message to SQS
    */
-  async sendResolutionEvent(event: Event, priceUpdate: PriceUpdate, winningOutcome: 'YES' | 'NO'): Promise<void> {
+  async sendResolutionEvent(event: Event, priceUpdate: PriceUpdate, winningOutcome: 'YES' | 'NO', keyIndex: number): Promise<void> {
     try {
       if (!event.pythFeedId || !event.triggerPrice || !event.operator) {
         throw new Error(`Event ${event.id} is missing required auto-resolution fields`);
@@ -57,8 +73,12 @@ export class SqsClient {
         actualPrice: priceUpdate.price.price,
         timestamp: priceUpdate.price.publish_time,
         winningOutcome,
-        vaa: priceUpdate.vaa
+        vaa: priceUpdate.vaa,
+        keyIndex
       };
+
+     // console.log(`Sending resolution event to SQS for event ${event.id} with winning outcome: ${winningOutcome}`);
+      console.log(`Message:`, JSON.stringify(message));
 
       const params: any = {
         MessageBody: JSON.stringify(message),

@@ -136,11 +136,13 @@ export class ContractClient {
       console.log(`VAA ${index+1} length: ${vaa.length}`);
     });
     
+    console.log("updateData", updateData);
     // Convert hex strings to proper BytesLike format
     const bytesData = updateData.map(hexString => {
       if (!hexString.startsWith('0x')) {
         hexString = '0x' + hexString;
       }
+      console.log("hexString", hexString);
       return hexString;
     });
     
@@ -206,16 +208,13 @@ export class ContractClient {
         to: this.oracleContract.target,
         from: this.signer.address
       });
+      
+      // Wait for confirmation with a reasonable timeout
       console.log(`Waiting for transaction confirmation...`);
       
-      // Add timeout for transaction confirmation
-      const confirmationPromise = tx.wait(90000);
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Transaction confirmation timed out after 30 seconds')), 90000);
-      });
-      
-      const receipt = await Promise.race([confirmationPromise, timeoutPromise]);
-      console.log(`Transaction confirmed in block ${receipt?.blockNumber}`);
+      const receipt = await tx.wait(1); // Wait for 1 confirmation
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`You can verify the transaction at: https://sepolia.arbiscan.io/tx/${tx.hash}`);
       return tx.hash;
     } catch (error: any) {
       console.error(`Contract call failed:`, error);

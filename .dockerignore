@@ -1,20 +1,27 @@
-# Node modules
-node_modules/
-
 # Git files
 .git/
 .gitignore
 
 # Build artifacts
 dist/
+!dist/lambda/
+!dist/container/
+!dist/shared/
 
 # Development files
 *.log
 *.md
 *.sh
+!docker-entrypoint.sh
 cloudformation-template.yaml
 docker-compose.yml
 
 # Editor configs
 .idea/
+
+# Allow package files and node_modules
+!package.json
+!bun.lock
+!prisma/
+!node_modules/
 .vscode/ 

@@ -43,13 +43,19 @@ async function handler(event, context, callback) {
             'WEB3_PROVIDER_URL',
             'ORACLE_CONTRACT_ADDRESS',
             'MARKET_FACTORY_CONTRACT_ADDRESS',
-            'PYTH_CONTRACT_ADDRESS',
-            'PRIVATE_KEY'
+            'PYTH_CONTRACT_ADDRESS'
         ];
         for (const envVar of requiredEnvVars) {
             if (!process.env[envVar]) {
                 throw new Error(`Required environment variable ${envVar} is not set`);
             }
+        }
+        // Validate at least one private key exists
+        const hasAnyPrivateKey = Array.from({ length: 10 }, (_, i) => 
+            process.env[`PRIVATE_KEY_${i}`]
+        ).some(key => key !== undefined);
+        if (!hasAnyPrivateKey) {
+            throw new Error('At least one PRIVATE_KEY_N (where N is 0-9) must be set');
         }
         // Initialize Prisma
         console.log("Getting Prisma client...");
@@ -58,11 +64,10 @@ async function handler(event, context, callback) {
         console.log("Testing database connection...");
         await prisma.$connect();
         console.log("Database connection verified");
-        // Initialize contract client
-        console.log("Initializing ContractClient...");
-        contractClient = new ContractClient_1.ContractClient(process.env.WEB3_PROVIDER_URL, process.env.ORACLE_CONTRACT_ADDRESS, process.env.MARKET_FACTORY_CONTRACT_ADDRESS, process.env.PYTH_CONTRACT_ADDRESS, process.env.PRIVATE_KEY);
         // Group records by event ID
         const eventGroups = new Map();
+        // Track processed events to prevent duplicates within this invocation
+        const processedEvents = new Set();
         // First pass - group by event ID
         for (const record of event.Records) {
             try {
@@ -71,6 +76,16 @@ async function handler(event, context, callback) {
                 if (!eventId) {
                     console.error("Message missing eventId:", message);
                     continue;
+                }
+                // Skip if we've already processed this event in this invocation
+                if (processedEvents.has(eventId)) {
+                    console.log(`Skipping duplicate event ${eventId} in this invocation`);
+                    continue;
+                }
+                // Validate keyIndex is present
+                if (message.keyIndex === undefined) {
+                    console.error(`Message for event ${eventId} missing keyIndex, defaulting to 0`);
+                    message.keyIndex = 0;
                 }
                 // Group by event ID
                 const records = eventGroups.get(eventId) || [];
@@ -84,11 +99,28 @@ async function handler(event, context, callback) {
         // Process each event group
         const processingPromises = Array.from(eventGroups.entries()).map(async ([eventId, records]) => {
             try {
-                if (!contractClient) {
-                    throw new Error("ContractClient not initialized");
+                // Mark this event as processed to prevent duplicates
+                processedEvents.add(eventId);
+                // Extract keyIndex from first record
+                const firstMessage = JSON.parse(records[0].body);
+                const keyIndex = firstMessage.keyIndex ?? 0;
+                const privateKey = process.env[`PRIVATE_KEY_${keyIndex}`];
+                if (!privateKey) {
+                    throw new Error(`PRIVATE_KEY_${keyIndex} is not set in environment variables`);
                 }
+                console.log(`Using PRIVATE_KEY_${keyIndex} for event ${eventId}`);
+                // Initialize contract client with selected private key
+                const eventContractClient = new ContractClient_1.ContractClient(
+                    process.env.WEB3_PROVIDER_URL,
+                    process.env.ORACLE_CONTRACT_ADDRESS,
+                    process.env.MARKET_FACTORY_CONTRACT_ADDRESS,
+                    process.env.PYTH_CONTRACT_ADDRESS,
+                    privateKey
+                );
+                // Verify Pyth contract interface
+                await eventContractClient.verifyPythContract();
                 // Fetch market address from smart contract
-                const marketAddress = await contractClient.getMarketAddressForEvent(eventId);
+                const marketAddress = await eventContractClient.getMarketAddressForEvent(eventId);
                 if (!marketAddress) {
                     console.error(`No market address found for event ID ${eventId}`);
                     return;
@@ -138,24 +170,58 @@ async function handler(event, context, callback) {
                 // Calculate winning token ID based on the outcome
                 const winningTokenId = winningOutcome === 'YES' ? eventId * 2 : eventId * 2 + 1;
                 console.log(`Calculated winning token ID: ${winningTokenId} for event ${eventId} (outcome: ${winningOutcome})`);
-
-                if (!prisma) {
-                    throw new Error("Prisma client not initialized");
-                }
-                // Update the event in the database with both status and winning token ID
-                await prisma.event.update({
-                    where: { id: eventId },
-                    data: {
-                        status: 'RESOLVED',
-                        winningTokenId: winningTokenId
-                    }
-                });
-                console.log(`Event ${eventId} resolved successfully with winning token ID ${winningTokenId}`);
-                
                 // Call the smart contract with all VAAs in a single transaction
-                const txHash = await contractClient.updatePriceAndFulfill(marketAddress, vaas);
-                console.log(`Smart contract called successfully for event ${eventId}, txHash : ${txHash}`);
-               
+                let txHash;
+                try {
+                    txHash = await eventContractClient.updatePriceAndFulfill(marketAddress, vaas);
+                    console.log(`Smart contract called successfully for event ${eventId}, txHash: ${txHash}`);
+                    // Update the event with resolution hash and winning token ID after successful confirmation
+                    if (!prisma) {
+                        throw new Error("Prisma client not initialized");
+                    }
+                    try {
+                        const event = await prisma.event.findUnique({
+                            where: {
+                                id: eventId
+                            }
+                        });
+                        if (!event) {
+                            console.log(`Event with ID ${eventId} not found`);
+                            return;
+                        }
+                        await fetch(`${process.env.MATCHING_ENGINE_BASE_URL}/api/realtime/update-event`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                eventId: event.id,
+                                status: 'RESOLVED',
+                                winningTokenId: winningTokenId,
+                                nickname: event?.nickname || ""
+                            }),
+                        });
+                    }
+                    catch (error) {
+                        console.log("Error updating testnet outcome market frontend:", error);
+                    }
+                    await prisma.event.update({
+                        where: { id: eventId },
+                        data: {
+                            resolutionHash: txHash,
+                            winningTokenId: winningTokenId,
+                            status: 'RESOLVED'
+                        }
+                    });
+                    console.log(`Event ${eventId} resolved successfully with resolution hash: ${txHash} and winning token ID: ${winningTokenId}`);
+                }
+                catch (contractError) {
+                    console.error(`Smart contract transaction failed for event ${eventId}:`, contractError);
+                    // Log the failure but don't change status - let the market checker bot handle it
+                    console.log(`Event ${eventId} resolution failed. Status remains RESOLVING for market checker bot to handle.`);
+                    // Re-throw the error to be caught by the outer catch block
+                    throw contractError;
+                }
             }
             catch (error) {
                 console.error(`Error processing event ${eventId}:`, error);

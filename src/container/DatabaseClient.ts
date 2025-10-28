@@ -1,4 +1,4 @@
-import { PrismaClient, Event, EventStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 export class DatabaseClient {
   private prisma: PrismaClient;
@@ -10,11 +10,12 @@ export class DatabaseClient {
   /**
    * Get all active events with auto-resolution enabled
    */
-  async getActiveAutoResolutionEvents(): Promise<Event[]> {
+  async getActiveAutoResolutionEvents(): Promise<any[]> {
     try {
       const events = await this.prisma.event.findMany({
         where: {
-          status: EventStatus.OPEN,
+          // Use raw string values to avoid enum typings at build time
+          status: 'OPEN' as any,
           autoResolve: true,
           pythFeedId: { not: null },
           triggerPrice: { not: null },
@@ -35,11 +36,11 @@ export class DatabaseClient {
   /**
    * Get expired events with auto-resolution enabled that need resolution
    */
-  async getExpiredAutoResolutionEvents(): Promise<Event[]> {
+  async getExpiredAutoResolutionEvents(): Promise<any[]> {
     try {
       const events = await this.prisma.event.findMany({
         where: {
-          status: EventStatus.OPEN,
+          status: 'OPEN' as any,
           autoResolve: true,
           pythFeedId: { not: null },
           triggerPrice: { not: null },
@@ -65,8 +66,8 @@ export class DatabaseClient {
     try {
       await this.prisma.event.update({
         where: { id: eventId },
-        data: { 
-          status: EventStatus.RESOLVED,
+          data: { 
+          status: 'RESOLVING' as any,
           winningTokenId: winningTokenId
         }
       });
@@ -86,7 +87,7 @@ export class DatabaseClient {
     try {
       await this.prisma.event.update({
         where: { id: eventId },
-        data: { status: EventStatus.RESOLVED }
+        data: { status: 'RESOLVED' as any }
       });
       
       console.log(`Event ${eventId} marked as resolved in the database`);
@@ -105,11 +106,11 @@ export class DatabaseClient {
     
     try {
       // Use a transaction to ensure all updates happen or none
-      await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx: any) => {
         await Promise.all(eventIds.map(eventId => 
           tx.event.update({
             where: { id: eventId },
-            data: { status: EventStatus.RESOLVED }
+            data: { status: 'RESOLVED' as any }
           })
         ));
       });
@@ -142,7 +143,7 @@ export class DatabaseClient {
   /**
    * Get event details by ID
    */
-  async getEventById(eventId: number): Promise<Event | null> {
+  async getEventById(eventId: number): Promise<any | null> {
     try {
       return await this.prisma.event.findUnique({
         where: { id: eventId }

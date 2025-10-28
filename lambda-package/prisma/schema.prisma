@@ -1,0 +1,326 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+model UserPositionSnapshot {
+  id                     String   @id @default(cuid())
+  user_id                String
+  event_id               Int
+  snapshot_date          DateTime @db.Date
+  yes_quantity           String   @default("0")
+  yes_cost_basis         String   @default("0")
+  yes_daily_realized_pnl String   @default("0")
+  no_quantity            String   @default("0")
+  no_cost_basis          String   @default("0")
+  no_daily_realized_pnl  String   @default("0")
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+  event                  Event    @relation(fields: [event_id], references: [id])
+  user                   User     @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, event_id, snapshot_date])
+  @@index([snapshot_date])
+  @@index([event_id, snapshot_date])
+}
+
+model User {
+  id                  String                 @id @default(cuid())
+  public_address      String                 @unique
+  username            String?
+  contract_address    String?
+  avatar_url          String?
+  role                Roles                  @default(USER)
+  created_at          DateTime               @default(now())
+  updated_at          DateTime               @updatedAt
+  email               String?
+  auth_nonce          String?
+  order_nonce         Int                    @default(0)
+  trading_enabled     Boolean                @default(false)
+  enable_trading_hash String?
+  Comments            Comments[]
+  maintenance         Maintenance[]
+  orders              Order[]
+  UserActivity        UserActivity[]
+  userOutcomes        UserOutcome[]
+  snapshots           UserPositionSnapshot[]
+  Watchlist           Watchlist[]
+}
+
+model Event {
+  title          String
+  description    String?
+  category       EventCategory?
+  subcategory    String?
+  status         EventStatus            @default(OPEN)
+  end_time       DateTime
+  rules          String                 @default("")
+  created_at     DateTime               @default(now())
+  updated_at     DateTime               @updatedAt
+  id             Int                    @id @default(autoincrement())
+  tags           String                 @default("")
+  image_url      String?
+  autoResolve    Boolean                @default(false)
+  operator       ComparisonOperator?
+  pythFeedId     String?
+  triggerPrice   String?
+  nickname       String                 @unique
+  winningTokenId Int?
+  txnHash        String?
+  resolutionHash String?
+  Comments       Comments[]
+  market         Market[]
+  userOutcomes   UserOutcome[]
+  snapshots      UserPositionSnapshot[]
+  Watchlist      Watchlist[]
+}
+
+model Market {
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
+  asset_type   AssetType
+  id           Int           @id
+  eventId      Int
+  Event        Event         @relation(fields: [eventId], references: [id])
+  orders       Order[]
+  userOutcomes UserOutcome[]
+
+  @@unique([eventId, asset_type])
+}
+
+model Comments {
+  id         String   @id @default(cuid())
+  userId     String
+  text       String
+  isReported Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  eventId    Int
+  reports    String[] @default([])
+  event      Event    @relation(fields: [eventId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model Watchlist {
+  id         String   @id @default(cuid())
+  userId     String
+  created_at DateTime @default(now())
+  eventId    Int
+  event      Event    @relation(fields: [eventId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model Whitelist {
+  id             String    @id @default(cuid())
+  public_address String    @unique
+  telegram       String?
+  discord        String?
+  twitter        String?
+  signature      String
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+  whitelisted    Boolean   @default(false)
+  eligible_date  DateTime?
+}
+
+model Order {
+  id                    String        @id @default(uuid())
+  user_id               String
+  side                  OrderSide
+  type                  OrderType
+  limit_price           String?
+  quantity              String
+  filled                String        @default("0")
+  status                OrderStatus   @default(OPEN)
+  nonce                 Int?          @default(0)
+  signature             String?
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+  complementaryOrderId  String?
+  isMinted              Boolean       @default(false)
+  marketContractAddress String?
+  market_id             Int
+  market                Market        @relation(fields: [market_id], references: [id])
+  user                  User          @relation(fields: [user_id], references: [id])
+  maker_transactions    Transaction[] @relation("MakerOrder")
+  taker_transactions    Transaction[] @relation("TakerOrder")
+}
+
+model Transaction {
+  id                    String   @id @default(uuid())
+  taker_order_id        String
+  maker_order_id        String
+  price                 String
+  quantity              String
+  created_at            DateTime @default(now())
+  marketContractAddress String
+  mintTransactionHash   String?
+  transaction_hash      String?
+  maker_order           Order    @relation("MakerOrder", fields: [maker_order_id], references: [id])
+  taker_order           Order    @relation("TakerOrder", fields: [taker_order_id], references: [id])
+}
+
+model UserOutcome {
+  id         String    @id @default(cuid())
+  user_id    String
+  market_id  Int
+  event_id   Int
+  outcome    String
+  token_type AssetType
+  price      String
+  size       String
+  pnl        String
+  action     String    @default("")
+  time       DateTime
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+  txnHash    String?
+  event      Event     @relation(fields: [event_id], references: [id])
+  market     Market    @relation(fields: [market_id], references: [id])
+  user       User      @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, market_id])
+  @@index([user_id])
+}
+
+model Maintenance {
+  id          String            @id @default(cuid())
+  title       String
+  description String?
+  status      MaintenanceStatus @default(SCHEDULED)
+  start_time  DateTime
+  end_time    DateTime
+  is_active   Boolean           @default(false)
+  created_by  String
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+  user        User              @relation(fields: [created_by], references: [id])
+
+  @@index([start_time])
+  @@index([end_time])
+  @@index([status])
+}
+
+model UserActivity {
+  id               String             @id
+  user_id          String
+  activity_type    UserActivityType
+  transaction_hash String
+  amount           String?
+  status           UserActivityStatus @default(PENDING)
+  created_at       DateTime           @default(now())
+  updated_at       DateTime
+  User             User               @relation(fields: [user_id], references: [id])
+
+  @@index([activity_type])
+  @@index([created_at])
+  @@index([user_id])
+}
+
+model BalanceSnapshot {
+  id                 String   @id @default(cuid())
+  wallet_address     String
+  collateral_balance BigInt
+  native_balance     Float
+  collateral_symbol  String
+  created_at         DateTime @default(now())
+
+  @@index([wallet_address])
+  @@index([created_at])
+}
+
+model FaucetClaim {
+  id        String   @id @default(cuid())
+  address   String
+  amount    BigInt
+  createdAt DateTime @default(now())
+
+  @@index([address, createdAt])
+}
+
+model Notification {
+  id            String   @id
+  walletAddress String
+  type          String
+  message       String?
+  payload       Json     @default("{}")
+  createdAt     DateTime @default(now())
+  isDeleted     Boolean  @default(false)
+  isRead        Boolean  @default(false)
+
+  @@index([createdAt])
+  @@index([walletAddress, type])
+}
+
+enum Roles {
+  ADMIN
+  USER
+}
+
+enum EventCategory {
+  CRYPTO
+  COMMODITIES
+  STOCK
+  FOREX
+}
+
+enum EventStatus {
+  OPEN
+  CLOSED
+  RESOLVED
+  PAUSED
+  RESOLVING
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  LIMIT
+  MARKET
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL
+  FILLED
+  CANCELED
+  QUEUED
+}
+
+enum AssetType {
+  YES
+  NO
+}
+
+enum ComparisonOperator {
+  LT
+  GT
+  EQ
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum UserActivityStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum UserActivityType {
+  DEPOSIT
+  WITHDRAW
+}

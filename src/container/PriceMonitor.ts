@@ -1,4 +1,10 @@
-import { Event, ComparisonOperator } from '@prisma/client';
+// Avoid importing Prisma enums/types in container build
+type Event = any;
+enum ComparisonOperator {
+  LT = 'LT',
+  GT = 'GT',
+  EQ = 'EQ',
+}
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
 import { SqsClient } from './SqsClient';
@@ -16,6 +22,8 @@ export class PriceMonitor {
   private resolutionTimeout: NodeJS.Timeout | null = null;
   // Track events that are in the process of being resolved
   private processingEvents: Set<number> = new Set();
+  // Round-robin counter for key selection (0-9)
+  private currentKeyIndex: number = 0;
 
   constructor(
     pythEndpoint: string,
@@ -47,6 +55,7 @@ export class PriceMonitor {
     this.isRunning = true;
     console.log("Starting price monitoring service");
     
+    console.log("currentKeyIndex", this.currentKeyIndex);
     // Initial load of events
     await this.refreshEvents();
     
@@ -164,8 +173,16 @@ export class PriceMonitor {
               // Mark as being processed to prevent duplicates
               this.processingEvents.add(event.id);
               
-              // Send resolution event with NO outcome
-              await this.sqsClient.sendResolutionEvent(event, currentPrice, 'NO');
+              // Mark event as RESOLVING with winning token (NO)
+              {
+                const winningTokenId = event.id * 2 + 1;
+                await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
+                console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
+              }
+
+            // Send resolution event with NO outcome
+            const keyIndex = this.getNextKeyIndex();
+            await this.sqsClient.sendResolutionEvent(event, currentPrice, 'NO', keyIndex);
               console.log(`Resolution event sent for expired event ${event.id}`);
               
               // Add to pending resolutions
@@ -267,6 +284,7 @@ export class PriceMonitor {
     
     // Convert price to decimal for comparison
     const currentPrice = BigInt(update.price.price);
+    //console.log("currentPrice", BigInt(currentPrice).toString());
     const expo = update.price.expo;
     // Adjust currentPrice to its real value using expo
     // If expo is negative, multiply by 10^expo (i.e., divide by 10^|expo|)
@@ -301,14 +319,22 @@ export class PriceMonitor {
         }
         
         // Check if event has expired - HYBRID APPROACH: Check expiration during price update
-        if (event.end_time <= currentTime) {
+          if (event.end_time <= currentTime) {
           console.log(`Event ${event.id} expired during price update, resolving as NO`);
           // Mark as being processed to prevent duplicates
           this.processingEvents.add(event.id);
           
           try {
+            // Mark event as RESOLVING with winning token (NO) before sending SQS
+            {
+              const winningTokenId = event.id * 2 + 1;
+              await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
+              console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
+            }
+
             // Send resolution event synchronously to prevent duplicates
-            await this.sqsClient.sendResolutionEvent(event, update, 'NO');
+            const keyIndex = this.getNextKeyIndex();
+            await this.sqsClient.sendResolutionEvent(event, update, 'NO', keyIndex);
             this.pendingResolutions.set(event.id, 'NO');
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
@@ -333,9 +359,7 @@ export class PriceMonitor {
           conditionMet = adjustedPrice >= triggerPrice;
         } else if (operator === ComparisonOperator.LT) {
           conditionMet = adjustedPrice <= triggerPrice;
-        } else if (operator === ComparisonOperator.EQ) {
-          conditionMet = adjustedPrice === triggerPrice;
-        }
+        }  
         
         if (conditionMet) {
           console.log(`Condition met for event ${event.id}: ${adjustedPrice} ${operator} ${triggerPrice}`);
@@ -343,8 +367,16 @@ export class PriceMonitor {
           this.processingEvents.add(event.id);
           
           try {
+            // Mark event as RESOLVING with winning token (YES) before sending SQS
+            {
+              const winningTokenId = event.id * 2;
+              await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
+              console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: YES)`);
+            }
+
             // Send resolution event synchronously to prevent duplicates
-            await this.sqsClient.sendResolutionEvent(event, update, 'YES');
+            const keyIndex = this.getNextKeyIndex();
+            await this.sqsClient.sendResolutionEvent(event, update, 'YES', keyIndex);
             this.pendingResolutions.set(event.id, 'YES');
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
@@ -385,5 +417,15 @@ export class PriceMonitor {
       this.pythClient.unsubscribe(feedId);
       console.log(`Removed event ${eventId} from monitoring feed ${feedId}. No more events for this feed, unsubscribed.`);
     }
+  }
+
+  /**
+   * Get the next key index in round-robin fashion (0-9)
+   */
+  private getNextKeyIndex(): number {
+    const keyIndex = this.currentKeyIndex;
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % 10;
+    console.log(`Selected key index: ${keyIndex}`);
+    return keyIndex;
   }
 }

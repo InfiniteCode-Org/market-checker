@@ -1,5 +1,5 @@
 import { PriceMonitor } from './container/PriceMonitor';
-import { PrismaClient, ComparisonOperator, EventStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
 // Load environment variables
