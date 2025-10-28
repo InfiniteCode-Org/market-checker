@@ -74,7 +74,7 @@ export class SqsClient {
         timestamp: priceUpdate.price.publish_time,
         winningOutcome,
         vaa: priceUpdate.vaa,
-        keyIndex
+       keyIndex: keyIndex
       };
 
      // console.log(`Sending resolution event to SQS for event ${event.id} with winning outcome: ${winningOutcome}`);
