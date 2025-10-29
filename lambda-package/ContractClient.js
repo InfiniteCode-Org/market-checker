@@ -176,7 +176,7 @@ class ContractClient {
             console.log(`Waiting for transaction confirmation...`);
             const receipt = await tx.wait(1); // Wait for 1 confirmation
             console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
-            console.log(`You can verify the transaction at: https://sepolia.arbiscan.io/tx/${tx.hash}`);
+            console.log(`You can verify the transaction at: https://hyperevmscan.io/tx/${tx.hash}`);
             return tx.hash;
         }
         catch (error) {
