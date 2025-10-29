@@ -6,16 +6,43 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const pythEndpoint = process.env.PYTH_ENDPOINT || 'https://hermes.pyth.network';
-const sqsQueueUrl = process.env.SQS_QUEUE_URL;
-const awsRegion = process.env.AWS_REGION || 'us-east-2';
+const providerUrl = process.env.WEB3_PROVIDER_URL;
+const oracleAddress = process.env.ORACLE_CONTRACT_ADDRESS;
+const marketFactoryAddress = process.env.MARKET_FACTORY_CONTRACT_ADDRESS;
+const pythAddress = process.env.PYTH_CONTRACT_ADDRESS;
+const matchingEngineUrl = process.env.MATCHING_ENGINE_BASE_URL;
 
-if (!sqsQueueUrl) {
-  console.error("SQS_QUEUE_URL environment variable is required");
+// Validate required environment variables
+if (!providerUrl) {
+  console.error("WEB3_PROVIDER_URL environment variable is required");
+  process.exit(1);
+}
+if (!oracleAddress) {
+  console.error("ORACLE_CONTRACT_ADDRESS environment variable is required");
+  process.exit(1);
+}
+if (!marketFactoryAddress) {
+  console.error("MARKET_FACTORY_CONTRACT_ADDRESS environment variable is required");
+  process.exit(1);
+}
+if (!pythAddress) {
+  console.error("PYTH_CONTRACT_ADDRESS environment variable is required");
+  process.exit(1);
+}
+if (!matchingEngineUrl) {
+  console.error("MATCHING_ENGINE_BASE_URL environment variable is required");
   process.exit(1);
 }
 
 // Create and start the price monitor
-const monitor = new PriceMonitor(pythEndpoint, sqsQueueUrl, awsRegion);
+const monitor = new PriceMonitor(
+  pythEndpoint,
+  providerUrl,
+  oracleAddress,
+  marketFactoryAddress,
+  pythAddress,
+  matchingEngineUrl
+);
 
 // Handle shutdown signals
 process.on('SIGTERM', async () => {

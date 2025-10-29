@@ -156,6 +156,27 @@ export class DatabaseClient {
   }
 
   /**
+   * Update an event with resolution hash and mark as RESOLVED
+   */
+  async updateEventResolutionHash(eventId: number, resolutionHash: string): Promise<void> {
+    try {
+      await this.prisma.event.update({
+        where: { id: eventId },
+        data: { 
+          resolutionHash: resolutionHash,
+          status: 'RESOLVED' as any
+        }
+      });
+      
+      console.log(`Event ${eventId} updated with resolution hash: ${resolutionHash}`);
+    } catch (error) {
+      console.error(`Error updating event ${eventId} with resolution hash:`, error);
+      Sentry.captureException(error);
+      throw error;
+    }
+  }
+
+  /**
    * Close the database connection
    */
   async disconnect(): Promise<void> {

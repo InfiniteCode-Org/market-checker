@@ -14,21 +14,6 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  # LocalStack for AWS services emulation
-  localstack:
-    image: localstack/localstack:latest
-    container_name: localstack
-    ports:
-      - "4566:4566"
-    environment:
-      - SERVICES=sqs
-      - DEBUG=1
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - TMPDIR=/tmp/localstack_tmp
-    volumes:
-      - "${TMPDIR:-/tmp}/localstack_tmp:/tmp/localstack_tmp"
-      - "/var/run/docker.sock:/var/run/docker.sock"
-    
   # Market Checker Service
   market_checker:
     image: market_checker
@@ -37,12 +22,24 @@ services:
       - "8080:8080"
     environment:
       - DATABASE_URL=postgresql://user:password@postgres:5432/crypto_monitoring
-      - AWS_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/crypto-price-queue
       - PYTH_ENDPOINT=https://hermes.pyth.network
+      - WEB3_PROVIDER_URL=${WEB3_PROVIDER_URL}
+      - ORACLE_CONTRACT_ADDRESS=${ORACLE_CONTRACT_ADDRESS}
+      - MARKET_FACTORY_CONTRACT_ADDRESS=${MARKET_FACTORY_CONTRACT_ADDRESS}
+      - PYTH_CONTRACT_ADDRESS=${PYTH_CONTRACT_ADDRESS}
+      - MATCHING_ENGINE_BASE_URL=${MATCHING_ENGINE_BASE_URL}
+      - PRIVATE_KEY_0=${PRIVATE_KEY_0}
+      - PRIVATE_KEY_1=${PRIVATE_KEY_1}
+      - PRIVATE_KEY_2=${PRIVATE_KEY_2}
+      - PRIVATE_KEY_3=${PRIVATE_KEY_3}
+      - PRIVATE_KEY_4=${PRIVATE_KEY_4}
+      - PRIVATE_KEY_5=${PRIVATE_KEY_5}
+      - PRIVATE_KEY_6=${PRIVATE_KEY_6}
+      - PRIVATE_KEY_7=${PRIVATE_KEY_7}
+      - PRIVATE_KEY_8=${PRIVATE_KEY_8}
+      - PRIVATE_KEY_9=${PRIVATE_KEY_9}
     depends_on:
       - postgres
-      - localstack
 
 volumes:
   postgres-data: 

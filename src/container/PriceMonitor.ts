@@ -7,32 +7,64 @@ enum ComparisonOperator {
 }
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
-import { SqsClient } from './SqsClient';
+import { ContractClient } from './ContractClient';
 
 export class PriceMonitor {
   private pythClient: PythClient;
   private dbClient: DatabaseClient;
-  private sqsClient: SqsClient;
+  private contractClients: ContractClient[] = [];
   private monitoringEvents: Map<string, Event[]> = new Map();
   private checkInterval: NodeJS.Timeout | null = null;
   private expiredCheckInterval: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
-  // Track resolved events to batch process them
-  private pendingResolutions: Map<number, 'YES' | 'NO'> = new Map();
-  private resolutionTimeout: NodeJS.Timeout | null = null;
   // Track events that are in the process of being resolved
   private processingEvents: Set<number> = new Set();
   // Round-robin counter for key selection (0-9)
   private currentKeyIndex: number = 0;
+  // Environment variables for contract interaction
+  private providerUrl: string;
+  private oracleAddress: string;
+  private marketFactoryAddress: string;
+  private pythAddress: string;
+  private matchingEngineUrl: string;
 
   constructor(
     pythEndpoint: string,
-    sqsQueueUrl: string,
-    region: string = 'us-east-1'
+    providerUrl: string,
+    oracleAddress: string,
+    marketFactoryAddress: string,
+    pythAddress: string,
+    matchingEngineUrl: string
   ) {
     this.pythClient = new PythClient(pythEndpoint);
     this.dbClient = new DatabaseClient();
-    this.sqsClient = new SqsClient(region, sqsQueueUrl);
+    this.providerUrl = providerUrl;
+    this.oracleAddress = oracleAddress;
+    this.marketFactoryAddress = marketFactoryAddress;
+    this.pythAddress = pythAddress;
+    this.matchingEngineUrl = matchingEngineUrl;
+    
+    // Initialize contract clients for all 10 private keys
+    for (let i = 0; i < 10; i++) {
+      const privateKey = process.env[`PRIVATE_KEY_${i}`];
+      if (privateKey) {
+        const client = new ContractClient(
+          providerUrl,
+          oracleAddress,
+          marketFactoryAddress,
+          pythAddress,
+          privateKey
+        );
+        this.contractClients.push(client);
+        console.log(`Initialized ContractClient ${i} for key index ${i}`);
+      }
+    }
+    
+    if (this.contractClients.length === 0) {
+      throw new Error('At least one PRIVATE_KEY_N (where N is 0-9) must be set');
+    }
+    
+    console.log(`Initialized ${this.contractClients.length} contract clients`);
     
     // Listen for price updates
     this.pythClient.on('priceUpdate', (update: PriceUpdate) => {
@@ -84,14 +116,6 @@ export class PriceMonitor {
       clearInterval(this.expiredCheckInterval);
       this.expiredCheckInterval = null;
     }
-    
-    if (this.resolutionTimeout) {
-      clearTimeout(this.resolutionTimeout);
-      this.resolutionTimeout = null;
-    }
-    
-    // Process any remaining resolutions
-    await this.processPendingResolutions();
     
     this.pythClient.close();
     await this.dbClient.disconnect();
@@ -180,13 +204,10 @@ export class PriceMonitor {
                 console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
               }
 
-            // Send resolution event with NO outcome
-            const keyIndex = this.getNextKeyIndex();
-            await this.sqsClient.sendResolutionEvent(event, currentPrice, 'NO', keyIndex);
-              console.log(`Resolution event sent for expired event ${event.id}`);
-              
-              // Add to pending resolutions
-              this.pendingResolutions.set(event.id, 'NO');
+              // Resolve via contract with NO outcome
+              const keyIndex = this.getNextKeyIndex();
+              await this.resolveEventViaContract(event, currentPrice, 'NO', keyIndex);
+              console.log(`Event ${event.id} resolved via contract successfully`);
             }
           } else {
             // If we can't get price data, mark all events as resolved directly
@@ -199,66 +220,10 @@ export class PriceMonitor {
           Sentry.captureException(error);
         }
       }
-      
-      // Process any pending resolutions
-      await this.processPendingResolutions();
     } catch (error) {
       console.error("Error checking expired events:", error);
       Sentry.captureException(error);
     }
-  }
-
-  /**
-   * Process any pending event resolutions in batch
-   */
-  private async processPendingResolutions(): Promise<void> {
-    if (this.pendingResolutions.size === 0) return;
-    
-    const eventIds = Array.from(this.pendingResolutions.keys());
-    const resolutions = Array.from(this.pendingResolutions.entries());
-    this.pendingResolutions.clear();
-    
-    try {
-      // Update each event with its winning outcome
-      await Promise.all(resolutions.map(async ([eventId, winningOutcome]) => {
-        const winningTokenId = winningOutcome === 'YES' ? eventId * 2 : eventId * 2 + 1;
-        
-        await this.dbClient.resolveEventWithOutcome(eventId, winningTokenId);
-        console.log(`Event ${eventId} resolved with winning token ID ${winningTokenId} (outcome: ${winningOutcome})`);
-      }));
-      
-      console.log(`Batch resolved ${eventIds.length} events with winning outcomes`);
-      // Clear these events from the processing set as well
-      eventIds.forEach(id => this.processingEvents.delete(id));
-    } catch (error) {
-      console.error("Error processing pending resolutions:", error);
-      Sentry.captureException(error);
-    }
-  }
-
-  /**
-   * Schedule pending resolutions to be processed
-   */
-  private schedulePendingResolutions(): void {
-    // Clear existing timeout if there is one
-    if (this.resolutionTimeout) {
-      clearTimeout(this.resolutionTimeout);
-    }
-    
-    // Set a new timeout to process resolutions in 5 seconds
-    this.resolutionTimeout = setTimeout(() => {
-      // Create a new function to handle the async call
-      const processResolutions = async () => {
-        await this.processPendingResolutions();
-      };
-      
-      // Call it and catch any errors
-      processResolutions().catch(err => {
-        console.error("Error in scheduled resolution processing:", err);
-      });
-      
-      this.resolutionTimeout = null;
-    }, 5000);
   }
 
   /**
@@ -325,24 +290,21 @@ export class PriceMonitor {
           this.processingEvents.add(event.id);
           
           try {
-            // Mark event as RESOLVING with winning token (NO) before sending SQS
+            // Mark event as RESOLVING with winning token (NO)
             {
               const winningTokenId = event.id * 2 + 1;
               await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
               console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
             }
 
-            // Send resolution event synchronously to prevent duplicates
+            // Resolve via contract synchronously to prevent duplicates
             const keyIndex = this.getNextKeyIndex();
-            await this.sqsClient.sendResolutionEvent(event, update, 'NO', keyIndex);
-            this.pendingResolutions.set(event.id, 'NO');
+            await this.resolveEventViaContract(event, update, 'NO', keyIndex);
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
-            // Schedule batch processing of resolutions
-            this.schedulePendingResolutions();
-            console.log(`Resolution event sent successfully for expired event ${event.id}`);
+            console.log(`Event ${event.id} resolved via contract successfully (expired)`);
           } catch (error) {
-            console.error(`Failed to send resolution event for expired event ${event.id}:`, error);
+            console.error(`Failed to resolve event ${event.id} via contract:`, error);
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
           }
@@ -367,24 +329,21 @@ export class PriceMonitor {
           this.processingEvents.add(event.id);
           
           try {
-            // Mark event as RESOLVING with winning token (YES) before sending SQS
+            // Mark event as RESOLVING with winning token (YES)
             {
               const winningTokenId = event.id * 2;
               await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
               console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: YES)`);
             }
 
-            // Send resolution event synchronously to prevent duplicates
+            // Resolve via contract synchronously to prevent duplicates
             const keyIndex = this.getNextKeyIndex();
-            await this.sqsClient.sendResolutionEvent(event, update, 'YES', keyIndex);
-            this.pendingResolutions.set(event.id, 'YES');
+            await this.resolveEventViaContract(event, update, 'YES', keyIndex);
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
-            // Schedule batch processing of resolutions
-            this.schedulePendingResolutions();
-            console.log(`Resolution event sent successfully for event ${event.id}`);
+            console.log(`Event ${event.id} resolved via contract successfully (condition met)`);
           } catch (error) {
-            console.error(`Failed to send resolution event for event ${event.id}:`, error);
+            console.error(`Failed to resolve event ${event.id} via contract:`, error);
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
             Sentry.captureException(error);
@@ -424,8 +383,89 @@ export class PriceMonitor {
    */
   private getNextKeyIndex(): number {
     const keyIndex = this.currentKeyIndex;
-    this.currentKeyIndex = (this.currentKeyIndex + 1) % 10;
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.contractClients.length;
     console.log(`Selected key index: ${keyIndex}`);
     return keyIndex;
+  }
+
+  /**
+   * Resolve an event by calling the smart contract directly
+   */
+  private async resolveEventViaContract(
+    event: Event,
+    priceUpdate: PriceUpdate,
+    winningOutcome: 'YES' | 'NO',
+    keyIndex: number
+  ): Promise<void> {
+    try {
+      // Validate VAA data
+      if (!priceUpdate.vaa) {
+        console.error(`No VAA data available for event ${event.id}`);
+        throw new Error('No VAA data available');
+      }
+
+      console.log(`Resolving event ${event.id} via contract with outcome: ${winningOutcome}`);
+      console.log(`VAA data length: ${priceUpdate.vaa.length}`);
+
+      // Get the contract client for this key index
+      const contractClient = this.contractClients[keyIndex];
+      if (!contractClient) {
+        throw new Error(`No contract client available for key index ${keyIndex}`);
+      }
+
+      // Get market address from factory contract
+      const marketAddress = await contractClient.getMarketAddressForEvent(event.id);
+      if (!marketAddress) {
+        throw new Error(`No market address found for event ${event.id}`);
+      }
+
+      // Call the smart contract with VAA data
+      const txHash = await contractClient.updatePriceAndFulfill(
+        marketAddress,
+        [priceUpdate.vaa]
+      );
+
+      console.log(`Smart contract called successfully for event ${event.id}, txHash: ${txHash}`);
+
+      // Calculate winning token ID
+      const winningTokenId = winningOutcome === 'YES' ? event.id * 2 : event.id * 2 + 1;
+
+      // Update the event in database with resolution hash and winning token ID
+      await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
+      
+      // Update the resolutionHash in the database
+      const dbEvent = await this.dbClient.getEventById(event.id);
+      if (dbEvent) {
+        await this.dbClient.updateEventResolutionHash(event.id, txHash);
+        console.log(`Event ${event.id} resolved with txHash: ${txHash} and winning token ID: ${winningTokenId}`);
+
+        // Notify the matching engine
+        try {
+          await fetch(`${this.matchingEngineUrl}/api/realtime/update-event`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              eventId: event.id,
+              status: 'RESOLVED',
+              winningTokenId: winningTokenId,
+              nickname: dbEvent.nickname || ''
+            }),
+          });
+          console.log(`Matching engine notified for event ${event.id}`);
+        } catch (error) {
+          console.error(`Error notifying matching engine for event ${event.id}:`, error);
+        }
+      }
+
+      // Remove from processing set
+      this.processingEvents.delete(event.id);
+      
+    } catch (error) {
+      console.error(`Error resolving event ${event.id} via contract:`, error);
+      // Remove from processing set so it can be retried
+      this.processingEvents.delete(event.id);
+      Sentry.captureException(error);
+      throw error;
+    }
   }
 }
