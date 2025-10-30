@@ -8,6 +8,7 @@ enum ComparisonOperator {
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
 import { ContractClient } from './ContractClient';
+import * as Sentry from '@sentry/node';
 
 export class PriceMonitor {
   private pythClient: PythClient;

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import * as Sentry from '@sentry/node';
 
 export class DatabaseClient {
   private prisma: PrismaClient;

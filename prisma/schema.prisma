@@ -31,26 +31,29 @@ model UserPositionSnapshot {
 }
 
 model User {
-  id                  String                 @id @default(cuid())
-  public_address      String                 @unique
-  username            String?
-  contract_address    String?
-  avatar_url          String?
-  role                Roles                  @default(USER)
-  created_at          DateTime               @default(now())
-  updated_at          DateTime               @updatedAt
-  email               String?
-  auth_nonce          String?
-  order_nonce         Int                    @default(0)
-  trading_enabled     Boolean                @default(false)
-  enable_trading_hash String?
-  Comments            Comments[]
-  maintenance         Maintenance[]
-  orders              Order[]
-  UserActivity        UserActivity[]
-  userOutcomes        UserOutcome[]
-  snapshots           UserPositionSnapshot[]
-  Watchlist           Watchlist[]
+  id                                         String                 @id @default(cuid())
+  public_address                             String                 @unique
+  username                                   String?
+  contract_address                           String?
+  avatar_url                                 String?
+  role                                       Roles                  @default(USER)
+  created_at                                 DateTime               @default(now())
+  updated_at                                 DateTime               @updatedAt
+  email                                      String?
+  auth_nonce                                 String?
+  order_nonce                                Int?                   @default(0)
+  enable_trading_hash                        String?
+  trading_enabled                            Boolean                @default(false)
+  Comments                                   Comments[]
+  LeaderboardSnapshot                        LeaderboardSnapshot[]
+  maintenance                                Maintenance[]
+  orders                                     Order[]
+  Transaction_Transaction_maker_userIdToUser Transaction[]          @relation("Transaction_maker_userIdToUser")
+  Transaction_Transaction_taker_userIdToUser Transaction[]          @relation("Transaction_taker_userIdToUser")
+  UserActivity                               UserActivity[]
+  userOutcomes                               UserOutcome[]
+  snapshots                                  UserPositionSnapshot[]
+  Watchlist                                  Watchlist[]
 }
 
 model Event {
@@ -74,8 +77,10 @@ model Event {
   winningTokenId Int?
   txnHash        String?
   resolutionHash String?
+  start_time     DateTime?
   Comments       Comments[]
   market         Market[]
+  Transaction    Transaction[]
   userOutcomes   UserOutcome[]
   snapshots      UserPositionSnapshot[]
   Watchlist      Watchlist[]
@@ -153,17 +158,37 @@ model Order {
 }
 
 model Transaction {
-  id                    String   @id @default(uuid())
-  taker_order_id        String
-  maker_order_id        String
-  price                 String
-  quantity              String
-  created_at            DateTime @default(now())
-  marketContractAddress String
-  mintTransactionHash   String?
-  transaction_hash      String?
-  maker_order           Order    @relation("MakerOrder", fields: [maker_order_id], references: [id])
-  taker_order           Order    @relation("TakerOrder", fields: [taker_order_id], references: [id])
+  id                                  String   @id @default(uuid())
+  taker_order_id                      String
+  maker_order_id                      String
+  price                               String
+  quantity                            String
+  created_at                          DateTime @default(now())
+  transaction_hash                    String?
+  marketContractAddress               String
+  mintTransactionHash                 String?
+  event_id                            Int?
+  event_nickname                      String?
+  maker_limit_price                   String?
+  maker_quantity                      String?
+  maker_userId                        String?
+  market_price                        String?
+  taker_limit_price                   String?
+  taker_quantity                      String?
+  taker_userId                        String?
+  updated_at                          DateTime @default(now())
+  Event                               Event?   @relation(fields: [event_id], references: [id])
+  maker_order                         Order    @relation("MakerOrder", fields: [maker_order_id], references: [id])
+  User_Transaction_maker_userIdToUser User?    @relation("Transaction_maker_userIdToUser", fields: [maker_userId], references: [id])
+  taker_order                         Order    @relation("TakerOrder", fields: [taker_order_id], references: [id])
+  User_Transaction_taker_userIdToUser User?    @relation("Transaction_taker_userIdToUser", fields: [taker_userId], references: [id])
+
+  @@index([event_id])
+  @@index([maker_order_id])
+  @@index([maker_userId])
+  @@index([taker_order_id])
+  @@index([taker_userId])
+  @@index([transaction_hash])
 }
 
 model UserOutcome {
@@ -258,6 +283,29 @@ model Notification {
   @@index([walletAddress, type])
 }
 
+model AdminWallets {
+  id             String   @id
+  public_address String   @unique
+  isAdmin        Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime
+}
+
+model LeaderboardSnapshot {
+  id                  String   @id
+  user_id             String
+  snapshot_date       DateTime @db.Date
+  total_realized_pnl  String   @default("0")
+  total_volume        String   @default("0")
+  events_participated Int      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime
+  User                User     @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, snapshot_date])
+  @@index([snapshot_date])
+}
+
 enum Roles {
   ADMIN
   USER
@@ -268,6 +316,9 @@ enum EventCategory {
   COMMODITIES
   STOCK
   FOREX
+  SPORTS
+  EARNINGS
+  ECONOMY
 }
 
 enum EventStatus {
@@ -276,6 +327,7 @@ enum EventStatus {
   RESOLVED
   PAUSED
   RESOLVING
+  UPCOMING
 }
 
 enum OrderSide {
