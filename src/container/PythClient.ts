@@ -103,7 +103,6 @@ export class PythClient extends EventEmitter {
             }
           } catch (error) {
             console.error("Error parsing price update:", error);
-            Sentry.captureException(error);
           }
         };
         
@@ -116,7 +115,6 @@ export class PythClient extends EventEmitter {
     } catch (error) {
       console.error("Failed to subscribe to price feeds:", error);
       this.handleConnectionError();
-      Sentry.captureException(error);
     }
   }
 
@@ -173,7 +171,6 @@ export class PythClient extends EventEmitter {
             console.error(`Error parsing price update for ${priceId}:`, error);
             singleEventSource.close();
             resolve(null);
-            Sentry.captureException(error);
           }
         };
         
@@ -187,7 +184,6 @@ export class PythClient extends EventEmitter {
       });
     } catch (error) {
       console.error(`Error getting latest price for ${priceId}:`, error);
-      Sentry.captureException(error);
       return null;
     }
   }

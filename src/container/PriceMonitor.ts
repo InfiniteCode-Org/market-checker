@@ -8,7 +8,6 @@ enum ComparisonOperator {
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
 import { ContractClient } from './ContractClient';
-import * as Sentry from '@sentry/node';
 
 export class PriceMonitor {
   private pythClient: PythClient;
@@ -153,7 +152,6 @@ export class PriceMonitor {
       console.log(`Monitoring ${events.length} events across ${priceIds.length} price feeds`);
     } catch (error) {
       console.error("Error refreshing events:", error);
-      Sentry.captureException(error);
     }
   }
 
@@ -218,12 +216,10 @@ export class PriceMonitor {
           }
         } catch (error) {
           console.error(`Error processing feed ${feedId} for expired events:`, error);
-          Sentry.captureException(error);
         }
       }
     } catch (error) {
       console.error("Error checking expired events:", error);
-      Sentry.captureException(error);
     }
   }
 
@@ -347,12 +343,11 @@ export class PriceMonitor {
             console.error(`Failed to resolve event ${event.id} via contract:`, error);
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
-            Sentry.captureException(error);
+            
           }
         }
       } catch (error) {
         console.error(`Error processing price update for event ${event.id}:`, error);
-        Sentry.captureException(error);
       }
     }
   }
@@ -465,7 +460,6 @@ export class PriceMonitor {
       console.error(`Error resolving event ${event.id} via contract:`, error);
       // Remove from processing set so it can be retried
       this.processingEvents.delete(event.id);
-      Sentry.captureException(error);
       throw error;
     }
   }

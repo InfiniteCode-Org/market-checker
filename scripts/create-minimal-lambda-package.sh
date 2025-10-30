@@ -12,11 +12,11 @@ mkdir -p dist/lambda
 
 # Compile TypeScript code
 echo "Compiling TypeScript..."
-npm run build
+bun run build
 
 # Generate Prisma client
 echo "Generating Prisma client..."
-npx prisma generate
+env -u NODE_OPTIONS bunx prisma generate
 
 # Create a directory for the Lambda package
 PACKAGE_DIR="lambda-package"
@@ -47,7 +47,7 @@ EOF
 
 # Install only the essential dependencies
 echo "Installing minimal dependencies..."
-npm install --production
+bun install --production
 
 # Copy Prisma client from parent node_modules
 echo "Copying Prisma client..."

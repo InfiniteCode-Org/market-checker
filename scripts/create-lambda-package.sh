@@ -14,9 +14,9 @@ mkdir -p dist/lambda
 echo "Compiling TypeScript..."
 bun run build
 
-# Generate Prisma client
+# Generate Prisma client (ignore global NODE_OPTIONS auto-imports)
 echo "Generating Prisma client..."
-bunx prisma generate
+env -u NODE_OPTIONS bunx prisma generate
 
 # Create a directory for the Lambda package
 PACKAGE_DIR="lambda-package"

@@ -35,7 +35,7 @@ The system consists of the following components:
   - Event expiration time is reached (resolves as NO)
 - **Round-Robin Key Management**: Supports 10 private keys (PRIVATE_KEY_0 through PRIVATE_KEY_9) for parallel transaction submission
 - **Duplicate Prevention**: Tracks events being processed to prevent duplicate resolutions
-- **Error Handling**: Retries failed resolutions and logs errors to Sentry
+- **Error Handling**: Retries failed resolutions and logs detailed errors
 - **Graceful Shutdown**: Handles SIGTERM/SIGINT signals properly
 
 ## Configuration
@@ -61,7 +61,7 @@ The system consists of the following components:
 - `PRIVATE_KEY_0` through `PRIVATE_KEY_9`: Private keys for transaction signing
 
 ### Optional Environment Variables
-- `SENTRY_DSN`: Sentry DSN for error tracking (if using Sentry)
+None currently
 
 ## Development
 
@@ -164,7 +164,6 @@ Events must have the following fields for auto-resolution:
 ## Monitoring and Observability
 
 - **Console Logs**: Detailed logging of price updates, condition checks, and contract calls
-- **Sentry Integration**: Error tracking and exception reporting
 - **Database State**: Track resolution progress via event status
 
 ## Differences from Previous Architecture
