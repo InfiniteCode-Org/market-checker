@@ -8,6 +8,7 @@ enum ComparisonOperator {
 import { PythClient, PriceUpdate } from './PythClient';
 import { DatabaseClient } from './DatabaseClient';
 import { ContractClient } from './ContractClient';
+import { logger } from '../shared/logger';
 
 export class PriceMonitor {
   private pythClient: PythClient;
@@ -56,7 +57,7 @@ export class PriceMonitor {
           privateKey
         );
         this.contractClients.push(client);
-        console.log(`Initialized ContractClient ${i} for key index ${i}`);
+        logger.info(`Initialized ContractClient ${i} for key index ${i}`);
       }
     }
     
@@ -64,13 +65,13 @@ export class PriceMonitor {
       throw new Error('At least one PRIVATE_KEY_N (where N is 0-9) must be set');
     }
     
-    console.log(`Initialized ${this.contractClients.length} contract clients`);
+    logger.info(`Initialized ${this.contractClients.length} contract clients`);
     
     // Listen for price updates
     this.pythClient.on('priceUpdate', (update: PriceUpdate) => {
       // Handle the async method properly
       this.handlePriceUpdate(update).catch(error => {
-        console.error('Error handling price update:', error);
+        logger.error('Error handling price update:', { error });
       });
     });
     
@@ -85,20 +86,18 @@ export class PriceMonitor {
     if (this.isRunning) return;
     
     this.isRunning = true;
-    console.log("Starting price monitoring service");
+    logger.info("Starting price monitoring service");
     
-    console.log("currentKeyIndex", this.currentKeyIndex);
+    logger.info("currentKeyIndex", { currentKeyIndex: this.currentKeyIndex });
     // Initial load of events
     await this.refreshEvents();
     
     // Initial check for expired events
     await this.checkExpiredEvents();
+     
+    this.checkInterval = setInterval(this.refreshEvents.bind(this), 0.5 * 60 * 1000);
     
-    // Set up periodic refresh of events (every 5 minutes)
-    this.checkInterval = setInterval(this.refreshEvents.bind(this), 2 * 60 * 1000);
-    
-    // Set up periodic check for expired events (every hour - safety net)
-    this.expiredCheckInterval = setInterval(this.checkExpiredEvents.bind(this), 5 * 60 * 1000);
+    this.expiredCheckInterval = setInterval(this.checkExpiredEvents.bind(this), 1 * 60 * 1000);
   }
 
   /**
@@ -120,7 +119,7 @@ export class PriceMonitor {
     this.pythClient.close();
     await this.dbClient.disconnect();
     
-    console.log("Price monitoring service stopped");
+    logger.info("Price monitoring service stopped");
   }
 
   /**
@@ -149,9 +148,9 @@ export class PriceMonitor {
       const priceIds = Array.from(eventsByFeedId.keys());
       await this.pythClient.subscribeToPriceFeeds(priceIds);
       
-      console.log(`Monitoring ${events.length} events across ${priceIds.length} price feeds`);
+      logger.info(`Monitoring ${events.length} events across ${priceIds.length} price feeds`);
     } catch (error) {
-      console.error("Error refreshing events:", error);
+      logger.error("Error refreshing events:", { error });
     }
   }
 
@@ -165,7 +164,7 @@ export class PriceMonitor {
       
       if (expiredEvents.length === 0) return;
       
-      console.log(`Found ${expiredEvents.length} expired events that need resolution (safety net check)`);
+      logger.info(`Found ${expiredEvents.length} expired events that need resolution (safety net check)`);
       
       // Group expired events by pythFeedId for more efficient processing
       const feedGroups = new Map<string, Event[]>();
@@ -189,7 +188,7 @@ export class PriceMonitor {
             for (const event of events) {
               // Skip if this event is already being processed
               if (this.processingEvents.has(event.id)) {
-                console.log(`Skipping expired event ${event.id} - already being processed`);
+                logger.info(`Skipping expired event ${event.id} - already being processed`);
                 continue;
               }
               
@@ -200,26 +199,26 @@ export class PriceMonitor {
               {
                 const winningTokenId = event.id * 2 + 1;
                 await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
-                console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
+                logger.info(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
               }
 
               // Resolve via contract with NO outcome
               const keyIndex = this.getNextKeyIndex();
               await this.resolveEventViaContract(event, currentPrice, 'NO', keyIndex);
-              console.log(`Event ${event.id} resolved via contract successfully`);
+              logger.info(`Event ${event.id} resolved via contract successfully`);
             }
           } else {
             // If we can't get price data, mark all events as resolved directly
             const eventIds = events.map(e => e.id);
             await this.dbClient.resolveEvents(eventIds);
-            console.log(`Events ${eventIds.join(', ')} marked as resolved (without price data)`);
+            logger.info(`Events ${eventIds.join(', ')} marked as resolved (without price data)`);
           }
         } catch (error) {
-          console.error(`Error processing feed ${feedId} for expired events:`, error);
+          logger.error(`Error processing feed ${feedId} for expired events:`, { error });
         }
       }
     } catch (error) {
-      console.error("Error checking expired events:", error);
+      logger.error("Error checking expired events:", { error });
     }
   }
 
@@ -260,7 +259,7 @@ export class PriceMonitor {
    // console.log("adjustedPrice", adjustedPrice, currentPrice, expo);
     // Only log occasional updates to reduce noise
     if (Math.random() < 0.1) { // Log approximately 1% of updates
-      console.log(`Processing price update for ${feedId.slice(0, 6)}... ${feedId.slice(-4)}: ${adjustedPrice} - monitoring events: [${eventIds.join(', ')}]`);
+      logger.info(`Processing price update for ${feedId.slice(0, 6)}... ${feedId.slice(-4)}: ${adjustedPrice} - monitoring events: [${eventIds.join(', ')}]`);
       // Log which events are being processed for this price update
       
     }
@@ -276,13 +275,13 @@ export class PriceMonitor {
         
         // Skip if this event is already being processed for resolution
         if (this.processingEvents.has(event.id)) {
-          console.log(`Skipping duplicate processing for event ${event.id} - already being resolved`);
+          logger.info(`Skipping duplicate processing for event ${event.id} - already being resolved`);
           continue;
         }
         
         // Check if event has expired - HYBRID APPROACH: Check expiration during price update
           if (event.end_time <= currentTime) {
-          console.log(`Event ${event.id} expired during price update, resolving as NO`);
+          logger.info(`Event ${event.id} expired during price update, resolving as NO`);
           // Mark as being processed to prevent duplicates
           this.processingEvents.add(event.id);
           
@@ -291,7 +290,7 @@ export class PriceMonitor {
             {
               const winningTokenId = event.id * 2 + 1;
               await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
-              console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
+              logger.info(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: NO)`);
             }
 
             // Resolve via contract synchronously to prevent duplicates
@@ -299,9 +298,9 @@ export class PriceMonitor {
             await this.resolveEventViaContract(event, update, 'NO', keyIndex);
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
-            console.log(`Event ${event.id} resolved via contract successfully (expired)`);
+            logger.info(`Event ${event.id} resolved via contract successfully (expired)`);
           } catch (error) {
-            console.error(`Failed to resolve event ${event.id} via contract:`, error);
+            logger.error(`Failed to resolve event ${event.id} via contract:`, { error });
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
           }
@@ -321,7 +320,7 @@ export class PriceMonitor {
         }  
         
         if (conditionMet) {
-          console.log(`Condition met for event ${event.id}: ${adjustedPrice} ${operator} ${triggerPrice}`);
+          logger.info(`Condition met for event ${event.id}: ${adjustedPrice} ${operator} ${triggerPrice}`);
           // Mark as being processed to prevent duplicates
           this.processingEvents.add(event.id);
           
@@ -330,7 +329,7 @@ export class PriceMonitor {
             {
               const winningTokenId = event.id * 2;
               await this.dbClient.resolveEventWithOutcome(event.id, winningTokenId);
-              console.log(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: YES)`);
+              logger.info(`Event ${event.id} marked RESOLVING with winning token ID ${winningTokenId} (outcome: YES)`);
             }
 
             // Resolve via contract synchronously to prevent duplicates
@@ -338,16 +337,16 @@ export class PriceMonitor {
             await this.resolveEventViaContract(event, update, 'YES', keyIndex);
             // Remove event from monitoring immediately
             this.removeEventFromMonitoring(feedId, event.id);
-            console.log(`Event ${event.id} resolved via contract successfully (condition met)`);
+            logger.info(`Event ${event.id} resolved via contract successfully (condition met)`);
           } catch (error) {
-            console.error(`Failed to resolve event ${event.id} via contract:`, error);
+            logger.error(`Failed to resolve event ${event.id} via contract:`, { error });
             // Remove from processing set if there was an error so it can be retried
             this.processingEvents.delete(event.id);
             
           }
         }
       } catch (error) {
-        console.error(`Error processing price update for event ${event.id}:`, error);
+        logger.error(`Error processing price update for event ${event.id}:`, { error });
       }
     }
   }
@@ -356,7 +355,7 @@ export class PriceMonitor {
    * Handle a connection failure
    */
   private handleConnectionFailure(): void {
-    console.error("WebSocket connection failed, attempting to restart the service");
+    logger.error("WebSocket connection failed, attempting to restart the service");
     this.stop().then(() => this.start());
   }
 
@@ -366,11 +365,11 @@ export class PriceMonitor {
     const remainingEvents = events.filter(e => e.id !== eventId);
     if (remainingEvents.length > 0) {
       this.monitoringEvents.set(feedId, remainingEvents);
-      console.log(`Removed event ${eventId} from monitoring feed ${feedId}. Remaining events: [${remainingEvents.map(e => e.id).join(', ')}]`);
+      logger.info(`Removed event ${eventId} from monitoring feed ${feedId}. Remaining events: [${remainingEvents.map(e => e.id).join(', ')}]`);
     } else {
       this.monitoringEvents.delete(feedId);
       this.pythClient.unsubscribe(feedId);
-      console.log(`Removed event ${eventId} from monitoring feed ${feedId}. No more events for this feed, unsubscribed.`);
+      logger.info(`Removed event ${eventId} from monitoring feed ${feedId}. No more events for this feed, unsubscribed.`);
     }
   }
 
@@ -380,7 +379,7 @@ export class PriceMonitor {
   private getNextKeyIndex(): number {
     const keyIndex = this.currentKeyIndex;
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.contractClients.length;
-    console.log(`Selected key index: ${keyIndex}`);
+    logger.info(`Selected key index: ${keyIndex}`);
     return keyIndex;
   }
 
@@ -396,12 +395,12 @@ export class PriceMonitor {
     try {
       // Validate VAA data
       if (!priceUpdate.vaa) {
-        console.error(`No VAA data available for event ${event.id}`);
+        logger.error(`No VAA data available for event ${event.id}`);
         throw new Error('No VAA data available');
       }
 
-      console.log(`Resolving event ${event.id} via contract with outcome: ${winningOutcome}`);
-      console.log(`VAA data length: ${priceUpdate.vaa.length}`);
+      logger.info(`Resolving event ${event.id} via contract with outcome: ${winningOutcome}`);
+      logger.info(`VAA data length: ${priceUpdate.vaa.length}`);
 
       // Get the contract client for this key index
       const contractClient = this.contractClients[keyIndex];
@@ -421,7 +420,7 @@ export class PriceMonitor {
         [priceUpdate.vaa]
       );
 
-      console.log(`Smart contract called successfully for event ${event.id}, txHash: ${txHash}`);
+      logger.info(`Smart contract called successfully for event ${event.id}, txHash: ${txHash}`);
 
       // Calculate winning token ID
       const winningTokenId = winningOutcome === 'YES' ? event.id * 2 : event.id * 2 + 1;
@@ -433,7 +432,7 @@ export class PriceMonitor {
       const dbEvent = await this.dbClient.getEventById(event.id);
       if (dbEvent) {
         await this.dbClient.updateEventResolutionHash(event.id, txHash);
-        console.log(`Event ${event.id} resolved with txHash: ${txHash} and winning token ID: ${winningTokenId}`);
+        logger.info(`Event ${event.id} resolved with txHash: ${txHash} and winning token ID: ${winningTokenId}`);
 
         // Notify the matching engine
         try {
@@ -447,9 +446,9 @@ export class PriceMonitor {
               nickname: dbEvent.nickname || ''
             }),
           });
-          console.log(`Matching engine notified for event ${event.id}`);
+          logger.info(`Matching engine notified for event ${event.id}`);
         } catch (error) {
-          console.error(`Error notifying matching engine for event ${event.id}:`, error);
+          logger.error(`Error notifying matching engine for event ${event.id}:`, { error });
         }
       }
 
@@ -457,7 +456,7 @@ export class PriceMonitor {
       this.processingEvents.delete(event.id);
       
     } catch (error) {
-      console.error(`Error resolving event ${event.id} via contract:`, error);
+      logger.error(`Error resolving event ${event.id} via contract:`, { error });
       // Remove from processing set so it can be retried
       this.processingEvents.delete(event.id);
       throw error;
